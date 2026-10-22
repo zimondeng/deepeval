@@ -3,6 +3,8 @@ from http.client import HTTPConnection
 from pathlib import Path
 import threading
 
+import pytest
+
 from ui.lifecycle import Task
 from ui.server import ConsoleApp, create_server
 from ui.reports import ReportStore
@@ -45,12 +47,12 @@ class FakeManager:
         return task
 
 
-def request(server, method, path, body=None):
+def request(server, method, path, body=None, headers=None):
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
     try:
         connection = HTTPConnection(*server.server_address)
-        headers = {"Host": "127.0.0.1"}
+        headers = {"Host": "127.0.0.1", **(headers or {})}
         payload = None
         if body is not None:
             payload = json.dumps(body).encode()
@@ -132,6 +134,46 @@ def test_run_status_cancel_logs_and_report_routes(tmp_path: Path):
         request(create_server(app, port=0), "DELETE", f"/api/runs/{run_id}")[0]
         == 200
     )
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Host": "evil.test"},
+        {"Origin": "http://evil.test"},
+    ],
+)
+def test_console_rejects_foreign_host_and_origin_without_mutating_config(
+    tmp_path: Path, headers: dict[str, str]
+):
+    app = ConsoleApp(repo_root=tmp_path)
+    server = create_server(app, "127.0.0.1", 0)
+
+    status, _, _ = request(
+        server,
+        "PUT",
+        "/api/config",
+        VALID_CONFIG,
+        headers=headers,
+    )
+    assert status == 403
+
+    status, _, body = request(
+        create_server(app, "127.0.0.1", 0), "GET", "/api/config"
+    )
+    assert status == 200
+    assert json.loads(body) is None
+
+
+def test_console_accepts_a_loopback_request_without_cross_origin_header(
+    tmp_path: Path,
+):
+    server = create_server(ConsoleApp(repo_root=tmp_path), "127.0.0.1", 0)
+
+    status, _, body = request(server, "GET", "/health")
+
+    assert status == 200
+    assert json.loads(body)["status"] == "ok"
 
 
 def test_console_serves_accessible_native_sections(tmp_path: Path):
