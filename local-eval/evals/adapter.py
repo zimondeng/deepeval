@@ -19,7 +19,11 @@ def load_jsonl(path: Path) -> list[dict]:
     return rows
 
 
-def actual_output(case: dict) -> tuple[str, str]:
+def actual_output(
+    case: dict,
+    target_headers: dict[str, str] | None = None,
+    proxy: str | None = None,
+) -> tuple[str, str]:
     """Return (answer, source). source is fixture or http.
 
     No TARGET_BASE_URL: use the answer stored on the case.
@@ -48,11 +52,19 @@ def actual_output(case: dict) -> tuple[str, str]:
     request = urllib.request.Request(
         url,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **(target_headers or {})},
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        opener = (
+            urllib.request.build_opener(
+                urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+            )
+            if proxy
+            else None
+        )
+        request_call = opener.open if opener else urllib.request.urlopen
+        with request_call(request, timeout=60) as response:
             body = json.loads(response.read().decode("utf-8"))
     except urllib.error.URLError as exc:
         raise RuntimeError(

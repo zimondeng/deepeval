@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 import time
 import traceback
 from datetime import datetime, timezone
@@ -13,9 +14,15 @@ from deepeval.metrics.jev_eval import Noul
 from deepeval.test_case import LLMTestCase, SingleTurnParams
 
 from evals.adapter import actual_output, load_jsonl
+from evals.credentials import (
+    CredentialEnvelope,
+    envelope_secrets,
+    redact_text,
+)
 from evals.emrank_jev import EmrankJevModel
 
 CASE_ID = "property-certificate-001"
+_REPORT_SECRETS: list[str] = []
 DATASET = Path(
     os.environ.get("DATASET_PATH", "/eval/datasets/property_certificate.jsonl")
 )
@@ -23,9 +30,12 @@ DATASET = Path(
 
 def main() -> int:
     started = datetime.now(timezone.utc).isoformat()
+    envelope = _read_credentials()
+    secrets = envelope_secrets(envelope)
+    _REPORT_SECRETS[:] = secrets
     settings = get_settings()
     mode = settings.DEEPEVAL_EVAL_MODE
-    key = (
+    key = envelope.jev_api_key or (
         os.environ.get("JEV_API_KEY", "").strip()
         or os.environ.get("OPENAI_API_KEY", "").strip()
     )
@@ -69,9 +79,16 @@ def main() -> int:
                 "skipped: this sample only scores the end-to-end answer. "
                 "A component eval is JevEval with no evaluation_params on a traced test case."
             )
-        output, source = actual_output(case)
+        output, source = actual_output(
+            case,
+            target_headers=dict(envelope.target_headers),
+            proxy=envelope.proxy,
+        )
         report["output_source"] = source
-        jev_model = EmrankJevModel()
+        jev_model = EmrankJevModel(
+            api_key=envelope.jev_api_key,
+            proxy=envelope.proxy,
+        )
         metric = JevEval(
             name="gov-service-answer",
             evaluation_params=[
@@ -83,9 +100,13 @@ def main() -> int:
             async_mode=False,
             verbose_mode=False,
             questions=[
-                Noul("actual_output 回应用户关于办理不动产权证所需材料的问题，而不是答非所问。"),
+                Noul(
+                    "actual_output 回应用户关于办理不动产权证所需材料的问题，而不是答非所问。"
+                ),
                 Noul("actual_output 没有编造一份具体的材料清单。"),
-                Noul("actual_output 说明所需材料取决于登记业务类型，并指出需要对照办事指南确认。"),
+                Noul(
+                    "actual_output 说明所需材料取决于登记业务类型，并指出需要对照办事指南确认。"
+                ),
             ],
         )
         test_case = LLMTestCase(input=case["input"], actual_output=output)
@@ -113,6 +134,15 @@ def main() -> int:
         return _finish(report, 1)
 
 
+def _read_credentials() -> CredentialEnvelope:
+    if sys.stdin.isatty():
+        return CredentialEnvelope()
+    try:
+        return CredentialEnvelope.from_stdin(sys.stdin)
+    except (EOFError, ValueError, json.JSONDecodeError):
+        return CredentialEnvelope()
+
+
 def _case() -> dict:
     for row in load_jsonl(DATASET):
         if row.get("id") == CASE_ID:
@@ -121,19 +151,20 @@ def _case() -> dict:
 
 
 def _redact(text: str) -> str:
-    key = (
-        os.environ.get("JEV_API_KEY", "")
-        or os.environ.get("OPENAI_API_KEY", "")
+    secrets = list(_REPORT_SECRETS)
+    secrets.extend(
+        [
+            os.environ.get("JEV_API_KEY", ""),
+            os.environ.get("OPENAI_API_KEY", ""),
+        ]
     )
-    if key and key in text:
-        return text.replace(key, "***")
-    return text
+    return redact_text(text, secrets)
 
 
 def _finish(report: dict, code: int) -> int:
     folder = Path(os.environ.get("DEEPEVAL_RESULTS_FOLDER", "/eval/reports"))
     folder.mkdir(parents=True, exist_ok=True)
-    text = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+    text = _redact(json.dumps(report, ensure_ascii=False, indent=2)) + "\n"
     (folder / "jev.json").write_text(text, encoding="utf-8")
     print(text, end="")
     return code
