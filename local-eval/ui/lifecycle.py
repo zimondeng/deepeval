@@ -24,7 +24,9 @@ class UnknownTaskError(KeyError):
 
 
 class CommandRunner(Protocol):
-    def start(self, command: tuple[str, ...]): ...
+    def start(
+        self, command: tuple[str, ...], stdin_payload: str | None = None
+    ): ...
 
     def stop(self, container: str): ...
 
@@ -49,7 +51,7 @@ class TaskManager:
         self._tasks: dict[str, Task] = {}
         self._active: str | None = None
 
-    def start(self) -> Task:
+    def start(self, stdin_payload: str | None = None) -> Task:
         if self._active is not None:
             raise ActiveTaskError("an evaluation is already active")
 
@@ -61,7 +63,7 @@ class TaskManager:
         self._tasks[run_id] = task
         self._active = run_id
         try:
-            self._runner.start(self._command(task))
+            self._runner.start(self._command(task), stdin_payload)
         except Exception:
             task.status = "failed"
             self._runner.stop(task.container_name)
@@ -115,6 +117,17 @@ class TaskManager:
             "-p",
             task.container_name,
             "run",
+            "-T",
+            "--env",
+            "JEV_API_KEY=",
+            "--env",
+            "OPENAI_API_KEY=",
+            "--env",
+            "HTTP_PROXY=",
+            "--env",
+            "HTTPS_PROXY=",
+            "--env",
+            "ALL_PROXY=",
             "--rm",
             "--name",
             task.container_name,
@@ -133,8 +146,17 @@ class SubprocessRunner:
     def __init__(self, cwd: Path):
         self._cwd = cwd
 
-    def start(self, command: tuple[str, ...]):
-        return subprocess.Popen(command, cwd=self._cwd)
+    def start(self, command: tuple[str, ...], stdin_payload: str | None = None):
+        process = subprocess.Popen(
+            command,
+            cwd=self._cwd,
+            stdin=subprocess.PIPE if stdin_payload is not None else None,
+            text=True,
+        )
+        if stdin_payload is not None and process.stdin is not None:
+            process.stdin.write(stdin_payload)
+            process.stdin.close()
+        return process
 
     def stop(self, container: str):
         subprocess.run(

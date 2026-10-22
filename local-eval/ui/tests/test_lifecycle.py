@@ -15,9 +15,11 @@ class FakeRunner:
         self.stale = []
         self.wait_results = {}
         self.start_error = None
+        self.stdin_payloads = []
 
-    def start(self, command):
+    def start(self, command, stdin_payload=None):
         self.commands.append(tuple(command))
+        self.stdin_payloads.append(stdin_payload)
         if self.start_error:
             raise self.start_error
         process = FakeProcess()
@@ -49,6 +51,17 @@ def test_start_builds_only_the_fixed_compose_command():
         "-p",
         f"deepeval-task-{task.run_id}",
         "run",
+        "-T",
+        "--env",
+        "JEV_API_KEY=",
+        "--env",
+        "OPENAI_API_KEY=",
+        "--env",
+        "HTTP_PROXY=",
+        "--env",
+        "HTTPS_PROXY=",
+        "--env",
+        "ALL_PROXY=",
         "--rm",
         "--name",
         f"deepeval-task-{task.run_id}",
@@ -128,8 +141,18 @@ def test_start_failure_cleans_up_container_before_releasing_task_slot():
     with pytest.raises(RuntimeError, match="compose failed"):
         manager.start()
 
-    container = runner.commands[0][9]
+    container = runner.commands[0][runner.commands[0].index("--name") + 1]
     assert runner.commands[1:] == [
         ("docker", "stop", "--time", "10", container),
         ("wait", container, "30"),
     ]
+
+
+def test_start_passes_session_credentials_only_as_stdin():
+    runner = FakeRunner()
+    manager = TaskManager(runner, compose_file="compose.yaml")
+
+    manager.start('{"jev_api_key":"fake-jev-secret"}')
+
+    assert runner.stdin_payloads == ['{"jev_api_key":"fake-jev-secret"}']
+    assert "fake-jev-secret" not in runner.commands[0]

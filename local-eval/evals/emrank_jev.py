@@ -5,7 +5,7 @@ import json
 import os
 from typing import Any, Dict, Optional, Tuple
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 from deepeval.models import DeepEvalBaseSystemOneModel
 from deepeval.models.system_one.schema import (
@@ -23,6 +23,7 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
         base_url: Optional[str] = None,
         model: Optional[str] = None,
         timeout: float = 60,
+        proxy: Optional[str] = None,
     ):
         self.api_key = (
             api_key
@@ -33,8 +34,11 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
             base_url or os.environ.get("JEV_BASE_URL", "https://emrank.tech")
         ).rstrip("/")
         self.timeout = timeout
+        self.proxy = proxy
         self.last_usage: Optional[Dict[str, int]] = None
-        super().__init__(model or os.environ.get("JEV_MODEL", "typesafe/jev-1.14.0"))
+        super().__init__(
+            model or os.environ.get("JEV_MODEL", "typesafe/jev-1.14.0")
+        )
 
     def load_model(self):
         return None
@@ -66,7 +70,15 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            opener = (
+                build_opener(
+                    ProxyHandler({"http": self.proxy, "https": self.proxy})
+                )
+                if self.proxy
+                else None
+            )
+            request_call = opener.open if opener else urlopen
+            with request_call(request, timeout=self.timeout) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError) as exc:
             detail = ""
@@ -88,7 +100,9 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
         result = {}
         for key, question in questions.items():
             if hasattr(question, "options"):
-                criteria = {str(option): str(option) for option in question.options}
+                criteria = {
+                    str(option): str(option) for option in question.options
+                }
                 result[key] = {
                     "type": "choice",
                     "instructions": question.instructions,
@@ -117,13 +131,17 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
                 raise RuntimeError(f"third-party Jev answer {key!r} is invalid")
             answer_type = answer.get("type")
             if answer_type == "noul":
-                answers.nouls[key] = NoulAnswer(probability=float(answer["noul"]))
+                answers.nouls[key] = NoulAnswer(
+                    probability=float(answer["noul"])
+                )
             elif answer_type == "choice":
                 answers.choices[key] = ChoiceAnswer(
                     choice=str(answer["choice"]),
                     probabilities={
                         str(option): float(probability)
-                        for option, probability in answer["probabilities"].items()
+                        for option, probability in answer[
+                            "probabilities"
+                        ].items()
                     },
                     confidence=float(answer["confidence"]),
                 )
@@ -132,7 +150,9 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
                     score=float(answer["score"]),
                     probabilities={
                         int(level): float(probability)
-                        for level, probability in answer["probabilities"].items()
+                        for level, probability in answer[
+                            "probabilities"
+                        ].items()
                     },
                     confidence=float(answer["confidence"]),
                 )

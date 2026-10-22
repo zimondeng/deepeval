@@ -19,10 +19,7 @@ services:
       JEV_BASE_URL: ${JEV_BASE_URL:-https://emrank.tech}
       DEEPEVAL_RESULTS_FOLDER: /eval/reports
       DEEPEVAL_TELEMETRY_OPT_OUT: "1"
-      # This daemon cannot reach the internet directly. Override if you have another proxy.
-      HTTP_PROXY: ${EVAL_HTTP_PROXY:-http://host.docker.internal:10808}
-      HTTPS_PROXY: ${EVAL_HTTPS_PROXY:-http://host.docker.internal:10808}
-      NO_PROXY: ${EVAL_NO_PROXY:-localhost,127.0.0.1}
+      # Session credentials, including proxy credentials, arrive on stdin.
     volumes:
       - ./evals:/eval/evals:ro
       - ./datasets:/eval/datasets:ro

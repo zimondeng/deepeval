@@ -21,7 +21,7 @@ local-eval/reports/jev.json
 - Jev 评估使用第三方 `emrank.tech` HTTP API，不使用 TypeSafe 官方 SDK。
 - 评估模式固定为 `DEEPEVAL_EVAL_MODE=system_one`。
 - 默认按需执行，容器完成任务后退出，不提供 Web 页面或常驻 Web 服务。
-- API Key 只通过环境变量注入，不写入 Dockerfile、镜像或评估报告。
+- 现有命令行流程仍可从 `.env` 读取 API Key；本地控制台会话改用一次性 stdin 凭证信封，不把密钥放入命令参数、容器环境或临时文件。
 - 评估结果保存到宿主机的 `local-eval/reports/`。
 
 `system_one` 和 `hybrid` 不等价。`system_one` 下，`JevEval` 直接把结构化问题发送给 Jev；Jev 调用失败时不会静默切换到其他 LLM。
