@@ -23,6 +23,9 @@ def actual_output(
     case: dict,
     target_headers: dict[str, str] | None = None,
     proxy: str | None = None,
+    target_url: str | None = None,
+    target_path: str | None = None,
+    timeout: float = 60,
 ) -> tuple[str, str]:
     """Return (answer, source). source is fixture or http.
 
@@ -30,7 +33,7 @@ def actual_output(
     TARGET_BASE_URL set: POST to the live system. A failed call raises.
     It does not fall back to the fixture.
     """
-    base = os.environ.get("TARGET_BASE_URL", "").strip()
+    base = (target_url or os.environ.get("TARGET_BASE_URL", "")).strip()
     if not base:
         output = case.get("actual_output")
         if not isinstance(output, str) or not output.strip():
@@ -39,8 +42,12 @@ def actual_output(
             )
         return output, "fixture"
 
-    path = os.environ.get("TARGET_PATH", "/chat") or "/chat"
-    url = base.rstrip("/") + path
+    path = (
+        target_path
+        if target_path is not None
+        else os.environ.get("TARGET_PATH", "/chat") or "/chat"
+    )
+    url = base.rstrip("/") + path if path else base
     payload = json.dumps(
         {
             "id": case.get("id"),
@@ -64,7 +71,7 @@ def actual_output(
             else None
         )
         request_call = opener.open if opener else urllib.request.urlopen
-        with request_call(request, timeout=60) as response:
+        with request_call(request, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
     except urllib.error.URLError as exc:
         raise RuntimeError(

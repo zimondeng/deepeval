@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import time
 from typing import Any, Dict, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener, urlopen
@@ -24,6 +25,7 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
         model: Optional[str] = None,
         timeout: float = 60,
         proxy: Optional[str] = None,
+        retry: int = 0,
     ):
         self.api_key = (
             api_key
@@ -35,6 +37,8 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
         ).rstrip("/")
         self.timeout = timeout
         self.proxy = proxy
+        self.retry = max(0, int(retry))
+        self.last_attempts = 0
         self.last_usage: Optional[Dict[str, int]] = None
         super().__init__(
             model or os.environ.get("JEV_MODEL", "typesafe/jev-1.14.0")
@@ -69,24 +73,40 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
             },
             method="POST",
         )
-        try:
-            opener = (
-                build_opener(
-                    ProxyHandler({"http": self.proxy, "https": self.proxy})
+        body = None
+        for attempt in range(self.retry + 1):
+            self.last_attempts = attempt + 1
+            try:
+                opener = (
+                    build_opener(
+                        ProxyHandler({"http": self.proxy, "https": self.proxy})
+                    )
+                    if self.proxy
+                    else None
                 )
-                if self.proxy
-                else None
-            )
-            request_call = opener.open if opener else urlopen
-            with request_call(request, timeout=self.timeout) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError) as exc:
-            detail = ""
-            if isinstance(exc, HTTPError):
-                detail = exc.read().decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(
-                f"third-party Jev request failed: {exc}. {detail}".strip()
-            ) from exc
+                request_call = opener.open if opener else urlopen
+                with request_call(request, timeout=self.timeout) as response:
+                    body = json.loads(response.read().decode("utf-8"))
+                break
+            except (HTTPError, URLError) as exc:
+                retryable = (
+                    isinstance(exc, HTTPError)
+                    and (exc.code == 429 or exc.code >= 500)
+                ) or (
+                    not isinstance(exc, HTTPError) and isinstance(exc, URLError)
+                )
+                if not retryable or attempt == self.retry:
+                    detail = ""
+                    if isinstance(exc, HTTPError):
+                        detail = exc.read().decode("utf-8", errors="replace")[
+                            :500
+                        ]
+                    raise RuntimeError(
+                        f"third-party Jev request failed: {exc}. {detail}".strip()
+                    ) from exc
+                time.sleep((1, 3)[min(attempt, 1)])
+        if body is None:  # pragma: no cover - loop either returns or raises
+            raise RuntimeError("third-party Jev request returned no body")
         self.last_usage = body.get("usage")
         return self._answers(body.get("answers")), None
 
@@ -118,6 +138,8 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
                 result[key] = {
                     "type": "noul",
                     "instructions": question.instructions,
+                    "true": getattr(question, "true", None),
+                    "false": getattr(question, "false", None),
                 }
         return result
 

@@ -22,6 +22,12 @@ _ITEM_DEFAULTS = {
     "duration_seconds": None,
     "error": None,
 }
+_ITEM_FIELDS = set(_ITEM_DEFAULTS) | {
+    "confidence",
+    "reason",
+    "score_breakdown",
+    "output_source",
+}
 
 
 class ReportStore:
@@ -127,7 +133,7 @@ class ReportStore:
             {
                 key: self._redact(value) if key == "error" else value
                 for key, value in values.items()
-                if key in _ITEM_DEFAULTS
+                if key in _ITEM_FIELDS
             }
         )
         self._refresh_completeness(report)
