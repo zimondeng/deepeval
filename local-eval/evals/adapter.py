@@ -54,14 +54,16 @@ def actual_output(
     url = base.rstrip("/") + path if path else base
     values = {
         "id": case.get("id"),
-        "input": case.get("input"),
-        "turns": case.get("turns"),
+        "input": _path_value(case, input_path, "input"),
+        "turns": _path_value(case, turns_path, "turns"),
     }
     if body_template:
         body = body_template
         for key, value in values.items():
-            body = body.replace(
-                "{{" + key + "}}", json.dumps(value, ensure_ascii=False)
+            quoted = json.dumps("{{" + key + "}}")
+            replacement = json.dumps(value, ensure_ascii=False)
+            body = body.replace(quoted, replacement).replace(
+                "{{" + key + "}}", replacement
             )
         try:
             request_body = json.loads(body)
@@ -106,3 +108,14 @@ def actual_output(
     if not isinstance(output, str) or not output.strip():
         raise RuntimeError("target response missing actual_output")
     return output, "http"
+
+
+def _path_value(case: dict, path: str | None, default: str):
+    if not path:
+        return case.get(default)
+    value = case
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            raise RuntimeError(f"case missing configured path: {path}")
+        value = value[part]
+    return value
