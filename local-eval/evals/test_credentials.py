@@ -60,3 +60,67 @@ def test_fake_child_receives_credentials_only_on_stdin(tmp_path: Path):
     observed = json.loads(result.stdout)
     assert observed["stdin"]["jev_api_key"] == "fake-jev-secret"
     assert "fake-jev-secret" not in json.dumps(observed["env"])
+
+
+def test_credentialed_jev_and_target_adapters_use_explicit_inputs(monkeypatch):
+    import json
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    from evals.adapter import actual_output
+    from evals.emrank_jev import EmrankJevModel
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers["Content-Length"])
+            json.loads(self.rfile.read(length))
+            if self.path == "/jev/v1/decisions":
+                body = {
+                    "answers": {
+                        "q_0": {"type": "noul", "noul": 0.9}
+                    },
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                }
+            elif self.path == "/chat":
+                body = {"actual_output": "target answer"}
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            data = json.dumps(body).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    base_url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        model = EmrankJevModel(
+            api_key="fake-jev",
+            base_url=f"{base_url}/jev",
+            model="fake/model",
+        )
+
+        class Question:
+            instructions = "is valid?"
+
+        answers, _ = model.decide(
+            {"state": "x"},
+            {"q_0": Question()},
+        )
+        assert answers.nouls["q_0"].probability == 0.9
+
+        monkeypatch.setenv("TARGET_BASE_URL", base_url)
+        output, source = actual_output(
+            {"id": "1", "input": "x"},
+            target_headers={"X-Target": "fake-target"},
+        )
+        assert (output, source) == ("target answer", "http")
+    finally:
+        server.shutdown()
