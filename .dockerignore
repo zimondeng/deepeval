@@ -1,0 +1,27 @@
+# Docker reads this file because compose build context is the repo root.
+# local-eval/.dockerignore is the same list, kept next to the compose file.
+.git
+.github
+.venv
+venv
+docs
+typescript
+tests
+setup-wizard
+skills
+assets
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.egg-info
+**/node_modules
+poetry.lock
+local-eval/reports
+local-eval/.env
+**/.env
+**/.env.*
+!**/.env.example
+**/*.md
+!README.md

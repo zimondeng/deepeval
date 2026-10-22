@@ -1,0 +1,27 @@
+# Docker reads this file only when it is at the build-context root.
+# compose.yaml sets context to the repo root, so the copy that matters is /.dockerignore.
+.git
+.github
+.venv
+venv
+docs
+typescript
+tests
+setup-wizard
+skills
+assets
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.egg-info
+**/node_modules
+poetry.lock
+local-eval/reports
+local-eval/.env
+**/.env
+**/.env.*
+!**/.env.example
+**/*.md
+!README.md

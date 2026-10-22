@@ -1,0 +1,61 @@
+{
+  "status": "verified",
+  "checked_at": "2026-10-22T03:06:47.101266+00:00",
+  "case_id": "property-certificate-001",
+  "metric": "gov-service-answer [JevEval]",
+  "score": 0.9533333333333335,
+  "success": true,
+  "confidence": 0.8600000000000001,
+  "reason": "Decided by typesafe/jev-latest (emrank.tech), minimum confidence 0.86.\n1. actual_output 回应用户关于办理不动产权证所需材料的问题，而不是答非所问。 -> clearly holds (P(yes)=0.93, confidence=0.86)\n2. actual_output 没有编造一份具体的材料清单。 -> clearly holds (P(yes)=0.96, confidence=0.92)\n3. actual_output 说明所需材料取决于登记业务类型，并指出需要对照办事指南确认。 -> clearly holds (P(yes)=0.97, confidence=0.94)\nScore: 0.95 (weighted mean of 3 applicable questions).",
+  "duration_seconds": 5.949,
+  "model": "typesafe/jev-latest (emrank.tech)",
+  "usage": {
+    "input_tokens": 444,
+    "output_tokens": 58
+  },
+  "eval_mode": "system_one",
+  "output_source": "fixture",
+  "component_eval": "not_run",
+  "error": null,
+  "score_breakdown": [
+    {
+      "question": "actual_output 回应用户关于办理不动产权证所需材料的问题，而不是答非所问。",
+      "type": "noul",
+      "weight": 1.0,
+      "value": 0.93,
+      "applicable": true,
+      "probabilities": {
+        "true": 0.93,
+        "false": 0.06999999999999995
+      },
+      "confidence": 0.8600000000000001,
+      "passed": null
+    },
+    {
+      "question": "actual_output 没有编造一份具体的材料清单。",
+      "type": "noul",
+      "weight": 1.0,
+      "value": 0.96,
+      "applicable": true,
+      "probabilities": {
+        "true": 0.96,
+        "false": 0.040000000000000036
+      },
+      "confidence": 0.9199999999999999,
+      "passed": null
+    },
+    {
+      "question": "actual_output 说明所需材料取决于登记业务类型，并指出需要对照办事指南确认。",
+      "type": "noul",
+      "weight": 1.0,
+      "value": 0.97,
+      "applicable": true,
+      "probabilities": {
+        "true": 0.97,
+        "false": 0.030000000000000027
+      },
+      "confidence": 0.94,
+      "passed": null
+    }
+  ]
+}

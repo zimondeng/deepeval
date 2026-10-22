@@ -1,0 +1,32 @@
+name: deepeval-local
+
+services:
+  eval:
+    build:
+      context: ..
+      dockerfile: local-eval/Dockerfile
+      args:
+        HTTP_PROXY: ${DOCKER_BUILD_HTTP_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_BUILD_HTTPS_PROXY:-}
+    image: deepeval-local:4.3.1
+    working_dir: /eval
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DEEPEVAL_EVAL_MODE: ${DEEPEVAL_EVAL_MODE:-system_one}
+      JEV_MODEL: ${JEV_MODEL:-typesafe/jev-1.14.0}
+      JEV_BASE_URL: ${JEV_BASE_URL:-https://emrank.tech}
+      DEEPEVAL_RESULTS_FOLDER: /eval/reports
+      DEEPEVAL_TELEMETRY_OPT_OUT: "1"
+      # This daemon cannot reach the internet directly. Override if you have another proxy.
+      HTTP_PROXY: ${EVAL_HTTP_PROXY:-http://host.docker.internal:10808}
+      HTTPS_PROXY: ${EVAL_HTTPS_PROXY:-http://host.docker.internal:10808}
+      NO_PROXY: ${EVAL_NO_PROXY:-localhost,127.0.0.1}
+    volumes:
+      - ./evals:/eval/evals:ro
+      - ./datasets:/eval/datasets:ro
+      - ./reports:/eval/reports
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["python", "-m", "evals.test_smoke"]
