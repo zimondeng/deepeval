@@ -197,3 +197,43 @@ def test_run_component_does_not_aggregate_failed_nodes(tmp_path, monkeypatch):
     assert report["execution_status"] == "failed"
     assert report["quality_passed"] is None
     assert report["aggregate_score"] is None
+
+
+def test_selected_component_inherits_trace_and_ancestor_context():
+    from evals.component import _effective_span, _selected_span
+
+    trace = normalize_trace(
+        {
+            "trace_id": "trace-1",
+            "context": ["trace context"],
+            "metadata": {"trace": "yes"},
+            "spans": [
+                {
+                    "span_id": "root",
+                    "parent_span_id": None,
+                    "context": ["root context"],
+                    "metadata": {"root": "yes"},
+                },
+                {
+                    "span_id": "selected",
+                    "parent_span_id": "root",
+                    "context": ["span context"],
+                    "metadata": {"span": "yes"},
+                },
+            ],
+        },
+        ["selected"],
+    )
+
+    selected = _effective_span(trace, _selected_span(trace, "selected"))
+
+    assert selected["context"] == [
+        "trace context",
+        "root context",
+        "span context",
+    ]
+    assert selected["metadata"] == {
+        "trace": "yes",
+        "root": "yes",
+        "span": "yes",
+    }

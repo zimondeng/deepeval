@@ -113,6 +113,42 @@ def _selected_span(trace: Mapping[str, Any], span_id: str) -> dict[str, Any]:
     raise KeyError(span_id)
 
 
+def _effective_span(
+    trace: Mapping[str, Any], span: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Add trace and ancestor context without changing the selected subtree."""
+    chain: list[Mapping[str, Any]] = []
+    current: Mapping[str, Any] | None = span
+    while current is not None:
+        chain.append(current)
+        parent_id = current.get("parent_span_id")
+        current = (
+            _selected_span(trace, parent_id) if parent_id is not None else None
+        )
+    chain.reverse()
+    result = copy.deepcopy(dict(span))
+    contexts: list[Any] = []
+    metadata: dict[str, Any] = {}
+    trace_context = trace.get("context")
+    if isinstance(trace_context, list):
+        contexts.extend(copy.deepcopy(trace_context))
+    trace_metadata = trace.get("metadata")
+    if isinstance(trace_metadata, Mapping):
+        metadata.update(copy.deepcopy(dict(trace_metadata)))
+    for item in chain:
+        item_context = item.get("context")
+        if isinstance(item_context, list):
+            contexts.extend(copy.deepcopy(item_context))
+        item_metadata = item.get("metadata")
+        if isinstance(item_metadata, Mapping):
+            metadata.update(copy.deepcopy(dict(item_metadata)))
+    if contexts:
+        result["context"] = contexts
+    if metadata:
+        result["metadata"] = metadata
+    return result
+
+
 def run_component(
     config: dict[str, Any],
     credentials: CredentialEnvelope,
@@ -164,7 +200,7 @@ def run_component(
     failures = False
     scores: list[float] = []
     for span_id in selected:
-        span = _selected_span(normalized, span_id)
+        span = _effective_span(normalized, _selected_span(normalized, span_id))
         try:
             test_case = LLMTestCase(
                 input=str(span.get("input", "")),
