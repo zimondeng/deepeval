@@ -8,7 +8,7 @@ def test_report_is_canonical_and_reconstructs_latest_from_run_file(
     tmp_path: Path,
 ):
     store = ReportStore(tmp_path, secrets=["jev-secret"])
-    report = store.create(
+    store.create(
         "abc123",
         config={"evaluation": {"engine": "system_one", "scope": "e2e"}},
         cases=[{"id": "case-1", "input": "hello"}],

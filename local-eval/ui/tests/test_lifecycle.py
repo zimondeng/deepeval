@@ -62,6 +62,8 @@ def test_start_builds_only_the_fixed_compose_command():
         "HTTPS_PROXY=",
         "--env",
         "ALL_PROXY=",
+        "--env",
+        f"DEEPEVAL_RUN_ID={task.run_id}",
         "--rm",
         "--name",
         f"deepeval-task-{task.run_id}",
@@ -70,7 +72,7 @@ def test_start_builds_only_the_fixed_compose_command():
         "eval",
         "python",
         "-m",
-        "evals.test_jev",
+        "evals.console_runner",
     )
 
 

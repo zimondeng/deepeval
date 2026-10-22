@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -41,6 +42,7 @@ class ConsoleApp:
         self.config: dict[str, Any] | None = None
         self.credentials = CredentialEnvelope()
         self.logs: dict[str, list[str]] = {}
+        self.session_token = secrets.token_urlsafe(24)
 
     def save_config(self, value: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(value, dict):
@@ -54,7 +56,11 @@ class ConsoleApp:
             jev = {}
             value["jev"] = jev
         key = credentials.get("jev_api_key") or jev.pop("api_key", None)
-        self.credentials = CredentialEnvelope(jev_api_key=key)
+        self.credentials = CredentialEnvelope(
+            jev_api_key=key,
+            target_headers=credentials.get("target_headers", {}),
+            proxy=credentials.get("proxy"),
+        )
         self.config = validate_config(value, allowed_root=self.repo_root)
         return export_config(self.config)
 
@@ -74,7 +80,14 @@ class Handler(BaseHTTPRequestHandler):
         if not self._safe_request():
             return
         if self.path == "/health":
-            return self._json(200, {"status": "ok", "runner": "docker-compose"})
+            return self._json(
+                200,
+                {
+                    "status": "ok",
+                    "runner": "docker-compose",
+                    "session_token": self.app.session_token,
+                },
+            )
         if self.path == "/api/config":
             return self._json(
                 200, export_config(self.app.config) if self.app.config else None
@@ -156,7 +169,7 @@ class Handler(BaseHTTPRequestHandler):
             base_url=jev.get("base_url"),
             model=jev.get("model"),
             timeout=jev.get("timeout") or 60,
-            retry=jev.get("retry") or 0,
+            retry=jev.get("retry", 2),
         )
         try:
             model.decide(
@@ -189,7 +202,14 @@ class Handler(BaseHTTPRequestHandler):
             )
         if payload:
             self.app.save_config(payload)
-        run = self.app.manager.start(self.app.credentials.to_stdin())
+        envelope = json.dumps(
+            {
+                "config": self.app.config,
+                "credentials": json.loads(self.app.credentials.to_stdin()),
+            },
+            ensure_ascii=False,
+        )
+        run = self.app.manager.start(envelope)
         self.app.logs[run.run_id] = ["run queued", "docker evaluation started"]
         return self._json(202, {"run_id": run.run_id, "status": run.status})
 
@@ -205,9 +225,22 @@ class Handler(BaseHTTPRequestHandler):
             )
         if suffix == "report":
             try:
-                return self._json(200, self.app.reports.read(run_id))
+                report = self.app.reports.read(run_id)
             except FileNotFoundError:
                 return self._json(404, {"error": "report unavailable"})
+            if report["execution_status"] in {
+                "completed",
+                "failed",
+                "cancelled",
+            }:
+                try:
+                    self.app.manager.finish(
+                        run_id,
+                        0 if report["execution_status"] == "completed" else 1,
+                    )
+                except (KeyError, UnknownTaskError):
+                    pass
+            return self._json(200, report)
         try:
             task = self.app.manager._tasks[run_id]
         except KeyError:
@@ -224,6 +257,12 @@ class Handler(BaseHTTPRequestHandler):
             "::1",
         }:
             self._json(403, {"error": "loopback host required"})
+            return False
+        if (
+            self.command in {"POST", "PUT", "DELETE"}
+            and self.headers.get("X-Session-Token") != self.app.session_token
+        ):
+            self._json(403, {"error": "session token required"})
             return False
         return True
 

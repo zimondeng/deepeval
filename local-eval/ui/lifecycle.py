@@ -128,6 +128,8 @@ class TaskManager:
             "HTTPS_PROXY=",
             "--env",
             "ALL_PROXY=",
+            "--env",
+            f"DEEPEVAL_RUN_ID={task.run_id}",
             "--rm",
             "--name",
             task.container_name,
@@ -136,7 +138,7 @@ class TaskManager:
             "eval",
             "python",
             "-m",
-            "evals.test_jev",
+            "evals.console_runner",
         )
 
 

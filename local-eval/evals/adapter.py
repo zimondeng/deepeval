@@ -26,6 +26,10 @@ def actual_output(
     target_url: str | None = None,
     target_path: str | None = None,
     timeout: float = 60,
+    body_template: str | None = None,
+    input_path: str | None = None,
+    turns_path: str | None = None,
+    output_path: str | None = None,
 ) -> tuple[str, str]:
     """Return (answer, source). source is fixture or http.
 
@@ -48,14 +52,26 @@ def actual_output(
         else os.environ.get("TARGET_PATH", "/chat") or "/chat"
     )
     url = base.rstrip("/") + path if path else base
-    payload = json.dumps(
-        {
-            "id": case.get("id"),
-            "input": case.get("input"),
-            "turns": case.get("turns"),
-        },
-        ensure_ascii=False,
-    ).encode("utf-8")
+    values = {
+        "id": case.get("id"),
+        "input": case.get("input"),
+        "turns": case.get("turns"),
+    }
+    if body_template:
+        body = body_template
+        for key, value in values.items():
+            body = body.replace(
+                "{{" + key + "}}", json.dumps(value, ensure_ascii=False)
+            )
+        try:
+            request_body = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "target body_template is not valid JSON"
+            ) from exc
+    else:
+        request_body = values
+    payload = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=payload,
@@ -79,7 +95,14 @@ def actual_output(
             f"the container. Use http://host.docker.internal:<port> for a "
             f"service on the Windows host. {exc}"
         ) from exc
-    output = body.get("actual_output") if isinstance(body, dict) else None
+    output = body
+    if output_path:
+        for part in output_path.split("."):
+            if not isinstance(output, dict) or part not in output:
+                raise RuntimeError("target response missing output path")
+            output = output[part]
+    elif isinstance(body, dict):
+        output = body.get("actual_output")
     if not isinstance(output, str) or not output.strip():
         raise RuntimeError("target response missing actual_output")
     return output, "http"

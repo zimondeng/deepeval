@@ -123,11 +123,17 @@ def validate_config(
             "evaluation.include_reason",
             errors,
         )
-        _list(
-            evaluation.get("evaluation_params"),
-            "evaluation.evaluation_params",
-            errors,
-        )
+        params = evaluation.get("evaluation_params")
+        _list(params, "evaluation.evaluation_params", errors)
+        if isinstance(params, list):
+            supported = {"input", "actual_output"}
+            for index, value in enumerate(params):
+                if value not in supported:
+                    errors[f"evaluation.evaluation_params[{index}]"] = (
+                        "must be 'input' or 'actual_output'"
+                    )
+            if not params:
+                errors["evaluation.evaluation_params"] = "must not be empty"
         questions = evaluation.get("questions")
         if not isinstance(questions, list) or not questions:
             errors["evaluation.questions"] = (
@@ -201,11 +207,25 @@ def validate_config(
             {"trace_path", "node_ids", "questions"},
             errors,
         )
-        _dot_path(component.get("trace_path"), "component.trace_path", errors)
+        _path(
+            component.get("trace_path"),
+            "component.trace_path",
+            errors,
+            allowed_root,
+            required=True,
+        )
         if not isinstance(component.get("node_ids"), list) or not component.get(
             "node_ids"
         ):
             errors["component.node_ids"] = "must contain at least one node id"
+        if "questions" in component:
+            if (
+                not isinstance(component["questions"], list)
+                or not component["questions"]
+            ):
+                errors["component.questions"] = "must be a non-empty array"
+            else:
+                _questions(component["questions"], errors)
 
     if errors:
         raise ConfigValidationError(errors)

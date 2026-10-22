@@ -52,7 +52,12 @@ def request(server, method, path, body=None, headers=None):
     thread.start()
     try:
         connection = HTTPConnection(*server.server_address)
-        headers = {"Host": "127.0.0.1", **(headers or {})}
+        app = server.RequestHandlerClass.app
+        headers = {
+            "Host": "127.0.0.1",
+            "X-Session-Token": app.session_token,
+            **(headers or {}),
+        }
         payload = None
         if body is not None:
             payload = json.dumps(body).encode()

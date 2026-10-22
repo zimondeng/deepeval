@@ -76,9 +76,7 @@ def test_credentialed_jev_and_target_adapters_use_explicit_inputs(monkeypatch):
             json.loads(self.rfile.read(length))
             if self.path == "/jev/v1/decisions":
                 body = {
-                    "answers": {
-                        "q_0": {"type": "noul", "noul": 0.9}
-                    },
+                    "answers": {"q_0": {"type": "noul", "noul": 0.9}},
                     "usage": {"input_tokens": 1, "output_tokens": 1},
                 }
             elif self.path == "/chat":

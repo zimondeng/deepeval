@@ -60,13 +60,12 @@ def run_e2e(
         model=jev["model"],
         timeout=jev.get("timeout") or 60,
         proxy=credentials.proxy,
-        retry=jev.get("retry") or 0,
+        retry=jev.get("retry", 2),
     )
+    params = evaluation.get("evaluation_params") or ["input", "actual_output"]
     metric = JevEval(
         name=frozen_config["project"]["name"],
-        evaluation_params=[
-            _PARAMS[name] for name in ("input", "actual_output")
-        ],
+        evaluation_params=[_PARAMS[name] for name in params],
         system_one_model=model,
         threshold=evaluation.get("threshold", 0.5),
         async_mode=False,
@@ -85,6 +84,10 @@ def run_e2e(
                 target_url=target["url"],
                 target_path="",
                 timeout=target.get("timeout") or 60,
+                body_template=target.get("body_template"),
+                input_path=target.get("input_path"),
+                turns_path=target.get("turns_path"),
+                output_path=target.get("output_path"),
             )
             metric.measure(
                 LLMTestCase(input=case["input"], actual_output=output),

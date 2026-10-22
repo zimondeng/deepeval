@@ -99,7 +99,7 @@ def _model(config: Mapping[str, Any], credentials: CredentialEnvelope):
         model=jev["model"],
         timeout=jev.get("timeout") or 60,
         proxy=credentials.proxy,
-        retry=jev.get("retry") or 0,
+        retry=jev.get("retry", 2),
     )
 
 
@@ -122,12 +122,18 @@ def run_component(
     """Evaluate selected spans through JevEval's native trace state."""
     frozen_config = validate_config(copy.deepcopy(config))
     exported_config = export_config(frozen_config)
-    trace_path = Path(frozen_config["dataset"]["path"])
+    trace_path = Path(frozen_config["component"]["trace_path"])
+    if (
+        not trace_path.exists()
+    ):  # legacy configs stored the trace in dataset.path
+        trace_path = Path(frozen_config["dataset"]["path"])
     raw_trace = json.loads(trace_path.read_text(encoding="utf-8"))
     component = frozen_config["component"]
     normalized = normalize_trace(raw_trace, component["node_ids"])
     run_id = run_id or uuid.uuid4().hex[:12]
-    question_values = frozen_config["evaluation"]["questions"]
+    question_values = (
+        component.get("questions") or frozen_config["evaluation"]["questions"]
+    )
     question_mapping = {
         question["id"]: f"q_{index}"
         for index, question in enumerate(question_values)
