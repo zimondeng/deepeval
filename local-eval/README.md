@@ -405,3 +405,14 @@ docker image rm deepeval-local:4.3.1
 ```
 
 删除前请确认没有其他任务依赖该镜像。
+
+## 13. 本地控制台
+
+在仓库根目录启动标准库控制台：
+
+```powershell
+$env:PYTHONPATH = 'local-eval'
+python -m ui.server
+```
+
+页面只绑定 `127.0.0.1:8787`。控制台会固定调用现有 Compose 评估命令，不接受命令、镜像或挂载路径。Compose UI 容器暂不启用：已验证评估镜像没有 Docker CLI/Compose，且 Windows 宿主路径不能安全地从容器推断；因此宿主机 Python 进程是当前明确的 fallback，限制见 `experiments/compose-ui.md`。
