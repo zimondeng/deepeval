@@ -44,6 +44,7 @@ class ReportStore:
         cases: list[dict[str, Any]],
         spans: list[dict[str, Any]] | None = None,
         snapshot: Any = None,
+        **metadata: Any,
     ) -> dict[str, Any]:
         report = {
             "schema_version": 1,
@@ -64,6 +65,8 @@ class ReportStore:
                 for item in (spans or [])
                 if isinstance(item.get("id"), str)
             },
+            "aggregate_score": metadata.pop("aggregate_score", None),
+            **self._redact(metadata),
         }
         self._refresh_completeness(report)
         self._write(run_id, report)
@@ -111,6 +114,15 @@ class ReportStore:
         )
         self._write(run_id, report)
         return report
+
+    def set_aggregate(self, run_id: str, score: float) -> dict[str, Any]:
+        report = self._read(run_id)
+        report["aggregate_score"] = score
+        self._write(run_id, report)
+        return report
+
+    def read(self, run_id: str) -> dict[str, Any]:
+        return self._read(run_id)
 
     def latest(self) -> dict[str, Any] | None:
         paths = sorted(self._folder.glob("run_*.json"), key=self._sort_key)
