@@ -76,6 +76,8 @@ class TaskManager:
             task.status = "failed"
             self._runner.stop(task.container_name)
             self._runner.wait_for_exit(task.container_name, timeout=30)
+            if hasattr(self._runner, "remove"):
+                self._runner.remove(task.container_name)
             self._active = None
             raise
         task.status = "running"
@@ -232,6 +234,13 @@ class SubprocessRunner:
             ("docker", "rm", "-f", container),
             cwd=self._cwd,
             check=False,
+        )
+        subprocess.run(
+            ("docker", "network", "rm", f"{container}_default"),
+            cwd=self._cwd,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
     def owned_containers(self) -> list[str]:

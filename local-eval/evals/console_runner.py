@@ -48,7 +48,13 @@ def main() -> int:
     if config["evaluation"]["scope"] == "component":
         report = run_component(config, credentials, reports, run_id)
     else:
-        report = run_e2e(config, credentials, reports, run_id)
+        report = run_e2e(
+            config,
+            credentials,
+            reports,
+            run_id,
+            dataset_cases=payload.get("dataset_cases"),
+        )
     print(json.dumps(report, ensure_ascii=False))
     return 0 if report["execution_status"] == "completed" else 1
 

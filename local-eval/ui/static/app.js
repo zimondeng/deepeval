@@ -1,48 +1,13 @@
-const form = document.querySelector('#config-form');
-const feedback = document.querySelector('#feedback');
-const preview = document.querySelector('#config-preview');
-const reportLink = document.querySelector('#report-link');
-let sessionToken = null;
-function value(name) { return form.elements[name]?.value || ''; }
-function number(name) { const raw = value(name).trim(); if (!raw) return undefined; const n = Number(raw); return Number.isFinite(n) ? n : undefined; }
-function json(name, fallback) { try { return JSON.parse(value(name) || JSON.stringify(fallback)); } catch { throw new Error(`${name} must be valid JSON`); } }
-function config() {
-  const type = value('question.type');
-  const question = {id: value('question.id'), type, text: value('question.text'), weight: number('question.weight')};
-  if (type === 'choice') question.options = json('question.values', {});
-  if (type === 'score') question.levels = json('question.values', []);
-  return {schema_version: 1, project: {name: 'local-eval'}, jev: {base_url: value('jev.base_url'), model: value('jev.model'), timeout: number('jev.timeout'), retry: number('jev.retry')}, evaluation: {engine: 'system_one', scope: value('evaluation.scope'), threshold: number('evaluation.threshold'), strict_mode: form.elements['evaluation.strict_mode'].checked, include_reason: form.elements['evaluation.include_reason'].checked, evaluation_params: value('evaluation.evaluation_params').split(',').map(x => x.trim()).filter(Boolean), questions: [question]}, dataset: {path: value('dataset.path'), max_cases: number('dataset.max_cases')}, target: {url: value('target.url'), headers: json('target.headers', {}), body_template: value('target.body_template'), output_path: value('target.output_path'), timeout: number('target.timeout')}, component: value('evaluation.scope') === 'component' ? {trace_path: value('component.trace_path'), node_ids: value('component.node_ids').split(',').map(x => x.trim()).filter(Boolean), questions: json('component.questions', [])} : null};
-}
-function payload() { const result = config(); const key = value('jev.api_key'); if (key) result.credentials = {jev_api_key: key}; return result; }
-async function api(path, options = {}) { const headers = {'Content-Type': 'application/json'}; if (options.method && options.method !== 'GET' && sessionToken) headers['X-Session-Token'] = sessionToken; const response = await fetch(path, {...options, headers}); const data = await response.json(); if (!response.ok) { const error = new Error(Object.values(data.errors || {}).join('; ') || data.error || 'Request failed'); error.status = response.status; throw error; } return data; }
-form.addEventListener('submit', async event => { event.preventDefault(); try { await api('/api/config', {method: 'PUT', body: JSON.stringify(payload())}); feedback.textContent = 'Configuration saved and validated.'; } catch (error) { feedback.textContent = error.message; } });
-document.querySelector('#preview').addEventListener('click', () => { try { preview.hidden = false; preview.textContent = JSON.stringify(config(), null, 2); } catch (error) { feedback.textContent = error.message; } });
-async function watchReport(runId, attempts = 10) {
-  try {
-    return await api(`/api/runs/${runId}/report`);
-  } catch (error) {
-    if (error.status === 404 && attempts > 0) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      return watchReport(runId, attempts - 1);
-    }
-    throw error;
-  }
-}
-async function watchRun(runId) {
-  try {
-    const run = await api(`/api/runs/${runId}`);
-    if (!['completed', 'failed', 'cancelled'].includes(run.status)) {
-      feedback.textContent = `Run ${runId} is ${run.status}.`;
-      setTimeout(() => watchRun(runId), 1000);
-      return;
-    }
-    const report = await watchReport(runId);
-    feedback.textContent = `Run ${runId} is ${report.execution_status}.`;
-    reportLink.href = `/api/runs/${runId}/report`;
-    reportLink.hidden = false;
-  } catch (error) {
-    feedback.textContent = `Run ${runId}: ${error.message}`;
-  }
-}
-document.querySelector('#start').addEventListener('click', async () => { try { const run = await api('/api/runs', {method: 'POST', body: JSON.stringify(payload())}); feedback.textContent = `Run ${run.run_id} is ${run.status}.`; watchRun(run.run_id); } catch (error) { feedback.textContent = error.message; } });
-fetch('/health').then(response => response.json()).then(data => { sessionToken = data.session_token; }).catch(() => {});
+const form=document.querySelector('#config-form'), feedback=document.querySelector('#feedback'), preview=document.querySelector('#config-preview'), reportLink=document.querySelector('#report-link'), list=document.querySelector('#question-list'); let token=null, runId=null;
+const val=(n,r=form)=>r.elements?.[n]?.value||''; const num=(n,r=form)=>{const x=val(n,r).trim();if(!x)return undefined;const nmb=Number(x);return Number.isFinite(nmb)?nmb:undefined}; const parsed=(n,d,r=form)=>{try{return JSON.parse(val(n,r)||JSON.stringify(d))}catch{throw Error(`${n} must be valid JSON`)}};
+function addQuestion(){const c=document.createElement('fieldset');c.className='question-card';c.innerHTML='<legend>Question</legend><button type="button" class="remove-question secondary">Remove</button><label>Question ID<input name="id" required></label><label>Question text<textarea name="text" required>The answer is useful.</textarea></label><label>Type<select name="type"><option value="noul">Noul</option><option value="choice">Choice</option><option value="score">Score</option></select></label><label>Weight<input name="weight" type="number" min=".000001" step="any" value="1"></label><label>Choice options / score levels JSON<textarea name="values">{"yes":1,"no":0}</textarea></label>';c.elements.id.value=`q${list.children.length+1}`;c.querySelector('.remove-question').onclick=()=>{if(list.children.length>1)c.remove()};list.append(c)}
+addQuestion();document.querySelector('#add-question').onclick=addQuestion;function syncEvaluationMode(){const rubric=val('evaluation.mode')==='rubric';document.querySelector('#questions').hidden=rubric;document.querySelector('#rubric-field').hidden=!rubric;document.querySelector('#evaluation-mode-help').textContent=rubric?'Rubric mode sends only binary criteria to Jev and calculates the final score from weighted true answers.':'Questions mode sends the question cards to Jev; Rubric criteria are not sent.'}document.querySelector('#evaluation-mode').onchange=syncEvaluationMode;syncEvaluationMode();
+function questions(){return [...list.children].map(c=>{const type=val('type',c),q={id:val('id',c),type,text:val('text',c),weight:num('weight',c)};if(type==='choice')q.options=parsed('values',{},c);if(type==='score')q.levels=parsed('values',[],c);return q})}
+function config(){const mode=val('evaluation.mode'),evaluation={engine:'system_one',scope:val('evaluation.scope'),threshold:num('evaluation.threshold'),strict_mode:form.elements['evaluation.strict_mode'].checked,include_reason:form.elements['evaluation.include_reason'].checked,evaluation_params:val('evaluation.evaluation_params').split(',').map(x=>x.trim()).filter(Boolean)};if(mode==='rubric')evaluation.rubric=parsed('evaluation.rubric',[]);else evaluation.questions=questions();return {schema_version:1,project:{name:'local-eval'},jev:{base_url:val('jev.base_url'),model:val('jev.model'),timeout:num('jev.timeout'),retry:num('jev.retry')},evaluation,dataset:{max_cases:num('dataset.max_cases')},target:{url:val('target.url'),headers:parsed('target.headers',{}),body_template:val('target.body_template'),output_path:val('target.output_path'),timeout:num('target.timeout')},component:val('evaluation.scope')==='component'?{trace_path:val('component.trace_path'),node_ids:val('component.node_ids').split(',').map(x=>x.trim()).filter(Boolean),questions:parsed('component.questions',[])}:null}}
+function payload(){const x=config(),key=val('jev.api_key');if(key)x.credentials={jev_api_key:key};return x}
+async function api(path,opt={}){const h={...(opt.headers||{})};if(!(opt.body instanceof FormData))h['Content-Type']='application/json';if(opt.method&&opt.method!=='GET'&&token)h['X-Session-Token']=token;const r=await fetch(path,{...opt,headers:h}),d=await r.json();if(!r.ok)throw Error(Object.values(d.errors||{}).join('; ')||d.error||'Request failed');return d}
+form.onsubmit=async e=>{e.preventDefault();try{await api('/api/config',{method:'PUT',body:JSON.stringify(payload())});feedback.textContent='Configuration saved and validated.'}catch(x){feedback.textContent=x.message}};document.querySelector('#preview').onclick=()=>{try{preview.hidden=false;preview.textContent=JSON.stringify(config(),null,2)}catch(x){feedback.textContent=x.message}};
+function renderReportItems(items){const root=document.querySelector('#report-items');root.replaceChildren();items.forEach(x=>{const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');summary.textContent=`${x.case_id} · ${x.quality_passed===null?x.execution_status:x.quality_passed?'passed':'failed'}`;pre.textContent=JSON.stringify({raw:x.raw,question_results:x.question_results,rubric_score:x.rubric_score,error:x.error},null,2);details.append(summary,pre);root.append(details)})}
+async function report(page=1){const d=await api(`/api/runs/${runId}/report?page=${page}&size=${document.querySelector('#page-size').value}`);document.querySelector('#report-summary').textContent=`${d.execution_status} · ${d.total} cases · page ${d.page}/${Math.max(d.pages,1)} · Rubric ${d.rubric_summary ? `${d.rubric_summary.passed}/${d.rubric_summary.total} (${(d.rubric_summary.percentage*100).toFixed(1)}%)` : 'pending'}`;renderReportItems(d.items);document.querySelector('#prev-page').disabled=d.page<=1;document.querySelector('#next-page').disabled=d.page>=d.pages;document.querySelector('#prev-page').onclick=()=>report(d.page-1);document.querySelector('#next-page').onclick=()=>report(d.page+1);document.querySelector('#report-modal').hidden=false;return d}
+async function watch(id){const d=await api(`/api/runs/${id}`);if(!['completed','failed','cancelled'].includes(d.status)){feedback.textContent=`Run ${id} is ${d.status}.`;setTimeout(()=>watch(id),1000);return}runId=id;const r=await report();feedback.textContent=`Run ${id} is ${r.execution_status}.`;reportLink.href=`/api/runs/${id}/report`;reportLink.hidden=false;document.querySelector('#excel-link').href=`/api/runs/${id}/report.xlsx`;document.querySelector('#excel-link').hidden=false}
+document.querySelector('#start').onclick=async()=>{try{const f=document.querySelector('#dataset-file').files[0];if(!f)throw Error('Choose a JSONL file');const b=new FormData();b.append('config',JSON.stringify(payload()));b.append('dataset',f);const d=await api('/api/runs',{method:'POST',body:b});feedback.textContent=`Run ${d.run_id} is ${d.status}.`;watch(d.run_id)}catch(x){feedback.textContent=x.message}};document.querySelector('#close-report').onclick=()=>document.querySelector('#report-modal').hidden=true;document.querySelector('#page-size').onchange=()=>report();fetch('/health').then(r=>r.json()).then(d=>token=d.session_token).catch(()=>{});

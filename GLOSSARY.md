@@ -47,3 +47,24 @@ Whether a complete evaluation meets its configured quality requirements. An inco
 ## Report
 
 The record of the evaluation inputs, execution outcome, verification status, quality verdict, detailed results and completeness. It contains no credentials.
+## Dataset
+
+A collection of test cases submitted for one evaluation execution. A dataset
+has an ordered set of unique test case identifiers.
+
+## Dataset Snapshot
+
+The immutable representation of the dataset and evaluation questions used by
+one execution. It makes a report reproducible without retaining credentials.
+
+## Fixture Output
+
+An actual answer supplied in a test case rather than produced by the target
+system. Fixture output is evaluated content, not evidence of a target-system
+call.
+
+## Question Result
+
+The structured Jev judgment for one question and one test case, including its
+answer, probability, confidence, score and any reason or error.
+

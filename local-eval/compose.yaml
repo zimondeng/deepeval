@@ -2,6 +2,7 @@ name: deepeval-local
 
 services:
   eval:
+    container_name: deepeval-local-eval
     build:
       context: ..
       dockerfile: local-eval/Dockerfile
@@ -30,6 +31,7 @@ services:
 
   console:
     image: deepeval-local:4.3.1
+    container_name: deepeval-local-console
     working_dir: /eval
     environment:
       DEEPEVAL_COMPOSE_FILE: /eval/compose.yaml

@@ -5,9 +5,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
+import pytest
+
 from evals.credentials import CredentialEnvelope
 from evals.emrank_jev import EmrankJevModel
-from evals.execution import _questions, run_e2e
+from evals.execution import _normalize_question_diagnostics, _questions, run_e2e
 from ui.reports import ReportStore
 
 
@@ -21,8 +23,12 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path == "/chat":
             body = {"actual_output": "target answer"}
         elif self.path == "/jev/v1/decisions":
+            answers = {
+                key: {"type": "noul", "noul": 0.9 if key == "q_0" else 0.1}
+                for key in payload["questions"]
+            }
             body = {
-                "answers": {"q_0": {"type": "noul", "noul": 0.9}},
+                "answers": answers,
                 "usage": {"input_tokens": 1, "output_tokens": 1},
             }
         else:
@@ -76,7 +82,7 @@ def _config(tmp_path: Path, base_url: str) -> dict:
                 {"id": "q1", "type": "noul", "text": "It is relevant."}
             ],
         },
-        "dataset": {"path": str(dataset)},
+        "dataset": {},
         "target": {"url": f"{base_url}/chat"},
         "component": None,
     }
@@ -91,6 +97,7 @@ def test_run_e2e_is_serial_verified_and_freezes_snapshots(tmp_path):
             CredentialEnvelope(jev_api_key="fake-key"),
             ReportStore(tmp_path / "reports", secrets=["fake-key"]),
             run_id="abc123",
+            dataset_cases=[{"id": "case-1", "input": "hello", "actual_output": "fixture answer", "expected_output": "fixture answer"}],
         )
 
         config["project"]["name"] = "changed after start"
@@ -103,7 +110,7 @@ def test_run_e2e_is_serial_verified_and_freezes_snapshots(tmp_path):
         }
         assert report["config"] == expected_config
         assert (
-            report["input_snapshot"]["content"][0]["actual_output"]
+            report["input_snapshot"]["content"]["cases"][0]["actual_output"]
             == "fixture answer"
         )
         assert report["cases"]["case-1"]["output_source"] == "http"
@@ -123,6 +130,7 @@ def test_target_failure_does_not_fallback_to_fixture(tmp_path):
             CredentialEnvelope(jev_api_key="fake-key"),
             ReportStore(tmp_path / "reports", secrets=["fake-key"]),
             run_id="def456",
+            dataset_cases=[{"id": "case-1", "input": "hello", "actual_output": "fixture answer", "expected_output": "fixture answer"}],
         )
 
         assert report["execution_status"] == "failed"
@@ -204,13 +212,13 @@ def test_run_e2e_escapes_invalid_unicode_in_target_request(tmp_path):
             + '\n',
             encoding="utf-8",
         )
-        config["dataset"]["path"] = str(dataset)
 
         report = run_e2e(
             config,
             CredentialEnvelope(jev_api_key="fake-key"),
             ReportStore(tmp_path / "reports", secrets=["fake-key"]),
             run_id="surrogate1",
+            dataset_cases=[{"id": "case-1", "input": "bad" + chr(0xDCBB), "actual_output": "fixture answer", "expected_output": "fixture answer"}],
         )
 
         assert report["execution_status"] == "completed"
@@ -219,3 +227,109 @@ def test_run_e2e_escapes_invalid_unicode_in_target_request(tmp_path):
             "/chat",
             "/jev/v1/decisions",
         ]
+
+
+def test_rubric_is_the_final_quality_source(tmp_path):
+    with fake_http() as base_url:
+        config = _config(tmp_path, base_url)
+        config["evaluation"]["threshold"] = 0.75
+        config["evaluation"].pop("questions")
+        config["evaluation"]["rubric"] = [
+            {
+                "id": "correct",
+                "text": "Is it correct?",
+                "true": "yes",
+                "false": "no",
+                "weight": 1,
+            },
+            {
+                "id": "complete",
+                "text": "Is it complete?",
+                "true": "yes",
+                "false": "no",
+                "weight": 1,
+            },
+        ]
+
+        report = run_e2e(
+            config,
+            CredentialEnvelope(jev_api_key="fake-key"),
+            ReportStore(tmp_path / "reports", secrets=["fake-key"]),
+            run_id="rubric1",
+            dataset_cases=[
+                {
+                    "id": "case-1",
+                    "input": "hello",
+                    "actual_output": "fixture answer",
+                    "expected_output": "fixture answer",
+                }
+            ],
+        )
+
+        case = report["cases"]["case-1"]
+        assert case["rubric_score"] == {
+            "passed": 1.0,
+            "total": 2.0,
+            "percentage": 0.5,
+        }
+        assert case["score"] == 0.5
+        assert case["quality_passed"] is False
+        assert report["quality_passed"] is False
+
+
+def test_question_result_keeps_configured_unicode_question(tmp_path):
+    with fake_http() as base_url:
+        config = _config(tmp_path, base_url)
+        config["evaluation"]["questions"][0]["text"] = "\u56de\u7b54\u662f\u5426\u51c6\u786e\u3001\u5b8c\u6574\u5730\u56de\u7b54\u4e86\u7528\u6237\u95ee\u9898\uff1f"
+
+        report = run_e2e(
+            config,
+            CredentialEnvelope(jev_api_key="fake-key"),
+            ReportStore(tmp_path / "reports", secrets=["fake-key"]),
+            run_id="unicode-question",
+            dataset_cases=[
+                {
+                    "id": "case-1",
+                    "input": "hello",
+                    "actual_output": "fixture answer",
+                    "expected_output": "fixture answer",
+                }
+            ],
+        )
+
+        assert (
+            report["cases"]["case-1"]["question_results"]["q1"]["question"]
+            == "\u56de\u7b54\u662f\u5426\u51c6\u786e\u3001\u5b8c\u6574\u5730\u56de\u7b54\u4e86\u7528\u6237\u95ee\u9898\uff1f"
+        )
+
+
+        question = "回答是否准确、完整地回答了用户问题？"
+        case = report["cases"]["case-1"]
+        assert case["question_results"]["q1"]["question"] == question
+        assert case["score_breakdown"][0]["question"] == question
+        assert "�" not in case["reason"]
+
+
+def test_question_diagnostics_replace_corrupt_provider_text():
+    question = "回答是否准确？"
+    corrupt = "�" * 12
+    results = {"q1": {"question": corrupt}}
+    breakdown = [{"question": corrupt, "value": 0.62}]
+
+    reason = _normalize_question_diagnostics(
+        [{"id": "q1", "text": question}],
+        results,
+        breakdown,
+        f"1. {corrupt} -> yes",
+    )
+
+    assert results["q1"]["question"] == question
+    assert breakdown[0]["question"] == question
+    assert reason == f"1. {question} -> yes"
+
+
+def test_jev_rejects_non_ascii_api_keys_before_http():
+    model = EmrankJevModel(api_key="密钥")
+
+    with pytest.raises(RuntimeError, match="ASCII"):
+        model.decide({}, {})

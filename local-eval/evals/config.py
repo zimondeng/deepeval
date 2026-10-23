@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 MAX_CASES = 10_000
 MAX_FIELD_LENGTH = 8_192
 MAX_QUESTIONS = 100
+MAX_DATASET_BYTES = 10 * 1024 * 1024
 
 _TOP_LEVEL = {
     "schema_version",
@@ -103,6 +104,7 @@ def validate_config(
                 "questions",
                 "evaluation_params",
                 "include_reason",
+                "rubric",
             },
             errors,
         )
@@ -135,7 +137,14 @@ def validate_config(
             if not params:
                 errors["evaluation.evaluation_params"] = "must not be empty"
         questions = evaluation.get("questions")
-        if not isinstance(questions, list) or not questions:
+        rubric = evaluation.get("rubric")
+        rubric_enabled = rubric is not None
+        if rubric_enabled:
+            if questions not in (None, []):
+                errors["evaluation.questions"] = (
+                    "must be empty when rubric is enabled"
+                )
+        elif not isinstance(questions, list) or not questions:
             errors["evaluation.questions"] = (
                 "must contain at least one question"
             )
@@ -143,19 +152,25 @@ def validate_config(
             errors["evaluation.questions"] = (
                 f"must contain at most {MAX_QUESTIONS} questions"
             )
-        else:
+        elif isinstance(questions, list):
             _questions(questions, errors)
+        if rubric_enabled:
+            if not isinstance(rubric, list) or not rubric:
+                errors["evaluation.rubric"] = "must be a non-empty array"
+            elif len(rubric) > MAX_QUESTIONS:
+                errors["evaluation.rubric"] = f"must contain at most {MAX_QUESTIONS} criteria"
+            else:
+                _rubric(rubric, errors)
 
     dataset = config.get("dataset")
     if isinstance(dataset, Mapping):
         _object(dataset, "dataset", {"path", "max_cases", "max_bytes"}, errors)
-        _path(
-            dataset.get("path"),
-            "dataset.path",
-            errors,
-            allowed_root,
-            required=True,
-        )
+        dataset_path = dataset.get("path")
+        scope = config.get("evaluation", {}).get("scope") if isinstance(config.get("evaluation"), Mapping) else None
+        if dataset_path not in (None, "") and scope != "component":
+            errors["dataset.path"] = (
+                "project dataset paths are no longer supported; upload a JSONL file"
+            )
         _number(
             dataset.get("max_cases"),
             "dataset.max_cases",
@@ -169,7 +184,7 @@ def validate_config(
             "dataset.max_bytes",
             errors,
             minimum=1,
-            maximum=100 * 1024 * 1024,
+            maximum=MAX_DATASET_BYTES,
             integer=True,
         )
 
@@ -447,3 +462,24 @@ def _questions(questions: list[Any], errors: dict[str, str]) -> None:
             if "weight" in str(exc).lower():
                 field = "weight"
             errors[f"{path}.{field}"] = str(exc).split("\n")[-1]
+
+
+def _rubric(criteria: list[Any], errors: dict[str, str]) -> None:
+    ids: set[str] = set()
+    for index, criterion in enumerate(criteria):
+        path = f"evaluation.rubric[{index}]"
+        if not isinstance(criterion, Mapping):
+            errors[path] = "must be an object"
+            continue
+        _object(criterion, path, {"id", "text", "weight", "true", "false"}, errors)
+        criterion_id = criterion.get("id")
+        if not isinstance(criterion_id, str) or not criterion_id.strip():
+            errors[f"{path}.id"] = "must be a non-empty string"
+        elif criterion_id in ids:
+            errors[f"{path}.id"] = "must be unique"
+        else:
+            ids.add(criterion_id)
+        _string(criterion.get("text"), f"{path}.text", errors, required=True)
+        _number(criterion.get("weight", 1.0), f"{path}.weight", errors, minimum=0.0000001)
+        _string(criterion.get("true"), f"{path}.true", errors, required=True)
+        _string(criterion.get("false"), f"{path}.false", errors, required=True)

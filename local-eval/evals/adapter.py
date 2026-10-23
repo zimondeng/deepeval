@@ -11,11 +11,61 @@ import urllib.request
 from pathlib import Path
 
 
+MAX_DATASET_BYTES = 10 * 1024 * 1024
+MAX_DATASET_LINES = 10_000
+MAX_DATASET_LINE_BYTES = 256 * 1024
+
+
 def load_jsonl(path: Path) -> list[dict]:
-    rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            rows.append(json.loads(line))
+    return parse_jsonl(path.read_bytes())
+
+
+def parse_jsonl(content: bytes | str) -> list[dict]:
+    if isinstance(content, str):
+        content = content.encode("utf-8")
+    if not content or len(content) > MAX_DATASET_BYTES:
+        raise ValueError("dataset file must be between 1 byte and 10 MB")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("dataset must be UTF-8 JSONL") from exc
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        if len(line.encode("utf-8")) > MAX_DATASET_LINE_BYTES:
+            raise ValueError(f"dataset line {line_number} exceeds 256 KB")
+        if len(rows) >= MAX_DATASET_LINES:
+            raise ValueError("dataset contains more than 10000 cases")
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"dataset line {line_number} is not valid JSON") from exc
+        if not isinstance(row, dict):
+            raise ValueError(f"dataset line {line_number} must be a JSON object")
+        case_id = row.get("id")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError(f"dataset line {line_number} requires a non-empty id")
+        if case_id in seen:
+            raise ValueError(f"dataset line {line_number} repeats id {case_id!r}")
+        if not isinstance(row.get("input"), str):
+            raise ValueError(f"dataset line {line_number} requires string input")
+        if not isinstance(row.get("expected_output"), str):
+            raise ValueError(
+                f"dataset line {line_number} requires string expected_output"
+            )
+        if "actual_output" in row and not isinstance(row["actual_output"], str):
+            raise ValueError(
+                f"dataset line {line_number} actual_output must be a string"
+            )
+        metadata = row.get("metadata")
+        if metadata is not None and not isinstance(metadata, dict):
+            raise ValueError(f"dataset line {line_number} metadata must be an object")
+        seen.add(case_id)
+        rows.append(row)
+    if not rows:
+        raise ValueError("dataset must contain at least one case")
     return rows
 
 

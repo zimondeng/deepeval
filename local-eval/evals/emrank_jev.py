@@ -40,6 +40,7 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
         self.retry = max(0, int(retry))
         self.last_attempts = 0
         self.last_usage: Optional[Dict[str, int]] = None
+        self.last_answers: Optional[SystemOneAnswers] = None
         super().__init__(
             model or os.environ.get("JEV_MODEL", "typesafe/jev-1.14.0")
         )
@@ -58,6 +59,12 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
                 "JEV_API_KEY is not set; configure the third-party Jev key "
                 "in local-eval/.env."
             )
+        try:
+            self.api_key.encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise RuntimeError(
+                "JEV_API_KEY must contain only ASCII characters"
+            ) from exc
         payload = {
             "model": self.name,
             "state": state,
@@ -108,7 +115,8 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
         if body is None:  # pragma: no cover - loop either returns or raises
             raise RuntimeError("third-party Jev request returned no body")
         self.last_usage = body.get("usage")
-        return self._answers(body.get("answers")), None
+        self.last_answers = self._answers(body.get("answers"))
+        return self.last_answers, None
 
     async def a_decide(
         self, state: Any, questions: Dict[str, Any]

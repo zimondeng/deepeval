@@ -23,7 +23,7 @@ VALID_CONFIG = {
         "scope": "e2e",
         "questions": [{"id": "q1", "type": "noul", "text": "Useful?"}],
     },
-    "dataset": {"path": "cases.jsonl"},
+    "dataset": {},
     "target": {"url": "https://example.test/chat"},
     "component": None,
 }
@@ -50,6 +50,11 @@ class FakeManager:
         return self._tasks[run_id]
 
 
+class FailingManager(FakeManager):
+    def start(self, stdin_payload=None):
+        raise BrokenPipeError("docker evaluator exited before stdin")
+
+
 def request(server, method, path, body=None, headers=None):
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
@@ -62,7 +67,9 @@ def request(server, method, path, body=None, headers=None):
             **(headers or {}),
         }
         payload = None
-        if body is not None:
+        if isinstance(body, bytes):
+            payload = body
+        elif body is not None:
             payload = json.dumps(body).encode()
             headers["Content-Type"] = "application/json"
         connection.request(method, path, payload, headers)
@@ -81,7 +88,7 @@ def request(server, method, path, body=None, headers=None):
 def test_config_round_trip_never_returns_session_secret(tmp_path: Path):
     config = {
         **VALID_CONFIG,
-        "dataset": {"path": str(tmp_path / "cases.jsonl")},
+        "dataset": {},
     }
     app = ConsoleApp(repo_root=tmp_path)
     server = create_server(app, "127.0.0.1", 0)
@@ -117,14 +124,14 @@ def test_run_status_cancel_logs_and_report_routes(tmp_path: Path):
     app = ConsoleApp(tmp_path, manager=manager, reports=reports)
     config = {
         **VALID_CONFIG,
-        "dataset": {"path": str(tmp_path / "cases.jsonl")},
+        "dataset": {},
     }
     assert (
         request(create_server(app, port=0), "PUT", "/api/config", config)[0]
         == 200
     )
 
-    status, _, body = request(create_server(app, port=0), "POST", "/api/runs")
+    status, _, body = request(create_server(app, port=0), "POST", "/api/runs", {"config": config, "dataset_cases": [{"id": "case-1", "input": "x", "expected_output": "x", "actual_output": "x"}]})
     run_id = json.loads(body)["run_id"]
     assert status == 202
     assert (
@@ -142,6 +149,63 @@ def test_run_status_cancel_logs_and_report_routes(tmp_path: Path):
         request(create_server(app, port=0), "DELETE", f"/api/runs/{run_id}")[0]
         == 200
     )
+
+
+def test_multipart_upload_keeps_utf8_question_text(tmp_path: Path):
+    app = ConsoleApp(tmp_path, manager=FakeManager())
+    question = "回答是否准确、完整地回答了用户问题？"
+    config = {
+        **VALID_CONFIG,
+        "evaluation": {
+            **VALID_CONFIG["evaluation"],
+            "questions": [{"id": "Accuracy", "type": "noul", "text": question}],
+        },
+    }
+    boundary = "----utf8boundary"
+    crlf = chr(13) + chr(10)
+    config_part = (
+        "--" + boundary + crlf
+        + 'Content-Disposition: form-data; name="config"' + crlf + crlf
+    ).encode() + json.dumps(config, ensure_ascii=False).encode("utf-8")
+    dataset_part = (
+        crlf + "--" + boundary + crlf
+        + 'Content-Disposition: form-data; name="dataset"; filename="cases.jsonl"' + crlf
+        + "Content-Type: application/octet-stream" + crlf + crlf
+        + '{"id":"case-1","input":"x","expected_output":"x"}' + chr(10)
+        + crlf + "--" + boundary + "--" + crlf
+    ).encode()
+    body = config_part + dataset_part
+    status, _, _ = request(
+        create_server(app, port=0),
+        "POST",
+        "/api/runs",
+        body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    assert status == 202
+    _, _, saved = request(create_server(app, port=0), "GET", "/api/config")
+    assert json.loads(saved)["evaluation"]["questions"][0]["text"] == question
+
+
+def test_run_start_failure_returns_json_error(tmp_path: Path):
+    app = ConsoleApp(tmp_path, manager=FailingManager())
+    status, content_type, body = request(
+        create_server(app, port=0),
+        "POST",
+        "/api/runs",
+        {
+            "config": VALID_CONFIG,
+            "dataset_cases": [
+                {"id": "case-1", "input": "x", "expected_output": "x"}
+            ],
+        },
+    )
+
+    assert status == 502
+    assert content_type.startswith("application/json")
+    assert json.loads(body) == {
+        "error": "evaluation runner failed: docker evaluator exited before stdin"
+    }
 
 
 @pytest.mark.parametrize(

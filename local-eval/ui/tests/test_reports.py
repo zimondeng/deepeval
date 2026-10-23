@@ -1,4 +1,6 @@
+import io
 import json
+import zipfile
 from pathlib import Path
 
 from ui.reports import ReportStore
@@ -47,6 +49,8 @@ def test_report_is_canonical_and_reconstructs_latest_from_run_file(
         "usage": {"input_tokens": 10, "output_tokens": 4},
         "duration_seconds": 1.25,
         "error": "request failed with ***",
+        "raw": {"id": "case-1", "input": "hello"},
+        "question_results": {},
     }
     assert finished["input_snapshot"]["sha256"]
     assert finished["input_snapshot"]["content"] == {
@@ -141,3 +145,64 @@ def test_report_escapes_isolated_surrogates_in_input(tmp_path: Path):
         encoding="utf-8"
     )
     assert report["input_snapshot"]["content"]["input"] == invalid
+
+
+def test_report_redacts_nested_values_and_excel_cells(tmp_path: Path):
+    store = ReportStore(tmp_path, secrets=["TOPSECRET"])
+    store.create(
+        "secret1",
+        config={},
+        cases=[{"id": "case-1", "input": "TOPSECRET"}],
+        snapshot={"input": "TOPSECRET"},
+    )
+    store.record_case(
+        "secret1",
+        "case-1",
+        execution_status="completed",
+        verification_status="verified",
+        quality_passed=True,
+        score=1.0,
+        usage={"token": "TOPSECRET"},
+        reason="TOPSECRET",
+        question_results={"q": {"reason": "TOPSECRET"}},
+        rubric_score={"passed": 1, "total": 1, "reason": "TOPSECRET"},
+    )
+    report = store.finish(
+        "secret1",
+        execution_status="completed",
+        verification_status="verified",
+        quality_passed=True,
+    )
+
+    assert "TOPSECRET" not in json.dumps(report)
+    workbook = store.export_xlsx("secret1")
+    assert b"TOPSECRET" not in workbook
+    with zipfile.ZipFile(io.BytesIO(workbook)) as archive:
+        workbook_xml = archive.read("xl/workbook.xml")
+    assert b"Judgments" in workbook_xml
+    assert b"Raw Report" in workbook_xml
+    assert b"Raw JSON" in workbook_xml
+
+
+def test_xlsx_sanitizes_controls_and_formula_text(tmp_path: Path):
+    store = ReportStore(tmp_path)
+    store.create("xlsx1", config={}, cases=[{"id": "case-1"}])
+    store.record_case(
+        "xlsx1",
+        "case-1",
+        execution_status="completed",
+        verification_status="verified",
+        quality_passed=True,
+        reason="=1+1\x00\x01",
+        question_results={"q": {"reason": "=1+1\x00\x01"}},
+    )
+    store.finish(
+        "xlsx1",
+        execution_status="completed",
+        verification_status="verified",
+        quality_passed=True,
+    )
+
+    workbook = store.export_xlsx("xlsx1")
+    assert b"=1+1" not in workbook
+    assert b"&#x1;" not in workbook

@@ -142,7 +142,7 @@ def test_a7_execution_score_matches_direct_jev_eval(
                 {"id": "relevant", "type": "noul", "text": "Relevant?"}
             ],
         },
-        "dataset": {"path": str(dataset)},
+        "dataset": {},
         "target": {"url": "http://target.test"},
         "component": None,
     }
@@ -181,6 +181,7 @@ def test_a7_execution_score_matches_direct_jev_eval(
         CredentialEnvelope(jev_api_key="fake-key"),
         ReportStore(tmp_path / "reports", secrets=["fake-key"]),
         run_id="a7",
+        dataset_cases=[{"id": "case-1", "input": "hello", "actual_output": "answer", "expected_output": "answer"}],
     )
 
     direct = JevEval(

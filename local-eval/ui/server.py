@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import json
+from email import policy
+from email.parser import BytesParser
 import os
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from evals.config import ConfigValidationError, export_config, validate_config
 from evals.credentials import CredentialEnvelope
 from evals.emrank_jev import EmrankJevModel
+from evals.adapter import parse_jsonl
 
 from .lifecycle import (
     ActiveTaskError,
@@ -126,6 +129,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(422, {"valid": False, "errors": exc.errors})
         except ActiveTaskError as exc:
             self._json(409, {"error": str(exc)})
+        except OSError as exc:
+            self._json(502, {"error": f"evaluation runner failed: {exc}"})
         except (ValueError, KeyError) as exc:
             self._json(400, {"error": str(exc)})
 
@@ -200,16 +205,21 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _start_run(self, payload: Any):
-        if self.app.config is None:
-            return self._json(
-                409, {"error": "save a valid configuration first"}
-            )
-        if payload:
-            self.app.save_config(payload)
+        if not isinstance(payload, dict):
+            raise ValueError("run request must be an object")
+        config = payload.get("config", payload)
+        if self.app.config is None and not config:
+            return self._json(409, {"error": "save a valid configuration first"})
+        if config:
+            self.app.save_config(config)
+        cases = payload.get("dataset_cases")
+        if not isinstance(cases, list) or not cases:
+            raise ValueError("dataset upload is required")
         envelope = json.dumps(
             {
                 "config": self.app.config,
                 "credentials": json.loads(self.app.credentials.to_stdin()),
+                "dataset_cases": cases,
             },
             ensure_ascii=False,
         )
@@ -227,23 +237,28 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(
                 200, {"run_id": run_id, "events": self.app.logs.get(run_id, [])}
             )
-        if suffix == "report":
+        if suffix == "report.xlsx":
             try:
-                report = self.app.reports.read(run_id)
+                body = self.app.reports.export_xlsx(run_id)
             except FileNotFoundError:
                 return self._json(404, {"error": "report unavailable"})
-            if report["execution_status"] in {
-                "completed",
-                "failed",
-                "cancelled",
-            }:
-                try:
-                    self.app.manager.finish(
-                        run_id,
-                        0 if report["execution_status"] == "completed" else 1,
-                    )
-                except (KeyError, UnknownTaskError):
-                    pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            self.send_header("Content-Disposition", f"attachment; filename=run_{run_id}.xlsx")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if suffix.startswith("report"):
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                page = int(query.get("page", ["1"])[0])
+                size = int(query.get("size", ["10"])[0])
+                report = self.app.reports.page(run_id, page, size)
+            except FileNotFoundError:
+                return self._json(404, {"error": "report unavailable"})
+            except ValueError as exc:
+                return self._json(400, {"error": str(exc)})
             return self._json(200, report)
         try:
             task = self.app.manager._tasks[run_id]
@@ -274,7 +289,27 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length > 10 * 1024 * 1024:
             raise ValueError("request too large")
-        return json.loads(self.rfile.read(length) or b"{}")
+        body = self.rfile.read(length)
+        content_type = self.headers.get("Content-Type", "")
+        if content_type.startswith("multipart/form-data"):
+            message = BytesParser(policy=policy.default).parsebytes(
+                b"Content-Type: " + content_type.encode() + bytes((13, 10, 13, 10)) + body
+            )
+            fields = {}
+            for part in message.iter_parts():
+                name = part.get_param("name", header="content-disposition")
+                if name == "config":
+                    # Browser form parts omit charset; get_content() then
+                    # decodes UTF-8 JSON as ASCII and replaces every byte.
+                    fields["config"] = json.loads(
+                        (part.get_payload(decode=True) or b"").decode("utf-8")
+                    )
+                elif name == "dataset":
+                    fields["dataset_cases"] = parse_jsonl(part.get_payload(decode=True) or b"")
+            if "dataset_cases" not in fields:
+                raise ValueError("dataset upload is required")
+            return fields
+        return json.loads(body or b"{}")
 
     def _json(self, status: int, value: Any):
         body = (

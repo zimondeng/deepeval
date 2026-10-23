@@ -34,7 +34,7 @@ def valid_config(tmp_path: Path) -> dict:
                 }
             ],
         },
-        "dataset": {"path": str(tmp_path / "cases.jsonl"), "max_cases": 100},
+        "dataset": {"max_cases": 100},
         "target": {"url": "https://example.test/chat", "timeout": 30},
         "component": None,
     }
@@ -47,7 +47,42 @@ def test_validate_accepts_schema_v1_and_returns_copy(valid_config):
     assert result is not valid_config
 
 
-def test_unknown_fields_report_field_level_error(valid_config):
+def test_rubric_mode_does_not_require_questions(valid_config):
+    config = copy.deepcopy(valid_config)
+    config["evaluation"].pop("questions")
+    config["evaluation"]["rubric"] = [
+        {
+            "id": "correct",
+            "text": "Is it correct?",
+            "true": "Yes",
+            "false": "No",
+        }
+    ]
+
+    result = validate_config(config)
+
+    assert "questions" not in result["evaluation"]
+    assert result["evaluation"]["rubric"][0]["id"] == "correct"
+
+
+def test_questions_and_rubric_are_mutually_exclusive(valid_config):
+    config = copy.deepcopy(valid_config)
+    config["evaluation"]["rubric"] = [
+        {
+            "id": "correct",
+            "text": "Is it correct?",
+            "true": "Yes",
+            "false": "No",
+        }
+    ]
+
+    with pytest.raises(ConfigValidationError) as raised:
+        validate_config(config)
+
+    assert "evaluation.questions" in raised.value.errors
+
+
+
     config = copy.deepcopy(valid_config)
     config["evaluation"]["unexpected"] = True
 
@@ -120,15 +155,14 @@ def test_component_scope_requires_component_config(valid_config):
     assert raised.value.errors["component"]
 
 
-def test_dataset_path_must_stay_inside_allowed_root(valid_config, tmp_path):
+def test_dataset_path_is_rejected(valid_config):
     config = copy.deepcopy(valid_config)
-    config["dataset"]["path"] = str(tmp_path.parent / "outside.jsonl")
+    config["dataset"]["path"] = "cases.jsonl"
 
     with pytest.raises(ConfigValidationError) as raised:
-        validate_config(config, allowed_root=tmp_path)
+        validate_config(config)
 
     assert "dataset.path" in raised.value.errors
-
 
 def test_limits_reject_oversized_dataset(valid_config):
     config = copy.deepcopy(valid_config)
