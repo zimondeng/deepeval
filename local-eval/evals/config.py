@@ -189,7 +189,7 @@ def validate_config(
             },
             errors,
         )
-        _url(target.get("url"), "target.url", errors, required=True)
+        _url(target.get("url"), "target.url", errors, required=False)
         _headers(target.get("headers"), "target.headers", errors)
         _string(target.get("body_template"), "target.body_template", errors)
         for name in ("input_path", "turns_path", "output_path"):
@@ -258,14 +258,12 @@ def _string(
 ) -> None:
     if value is None and not required:
         return
-    if (
-        not isinstance(value, str)
-        or not value.strip()
-        or len(value) > MAX_FIELD_LENGTH
-    ):
+    if not isinstance(value, str) or len(value) > MAX_FIELD_LENGTH:
         errors[path] = (
             "must be a non-empty string" if required else "must be a string"
         )
+    elif required and not value.strip():
+        errors[path] = "must be a non-empty string"
 
 
 def _bool(value: Any, path: str, errors: dict[str, str]) -> None:
@@ -306,6 +304,8 @@ def _list(value: Any, path: str, errors: dict[str, str]) -> None:
 def _url(
     value: Any, path: str, errors: dict[str, str], required: bool = False
 ) -> None:
+    if isinstance(value, str) and not value.strip() and not required:
+        return
     _string(value, path, errors, required)
     if isinstance(value, str):
         parsed = urlparse(value)
@@ -362,7 +362,7 @@ def _path(
 
 
 def _dot_path(value: Any, path: str, errors: dict[str, str]) -> None:
-    if value is None:
+    if value is None or value == "":
         return
     if (
         not isinstance(value, str)

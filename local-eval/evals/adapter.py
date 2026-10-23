@@ -73,7 +73,7 @@ def actual_output(
             ) from exc
     else:
         request_body = values
-    payload = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
+    payload = json.dumps(request_body, ensure_ascii=True).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=payload,

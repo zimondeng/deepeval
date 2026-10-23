@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,13 +32,16 @@ class ConsoleApp:
         repo_root: Path,
         manager: TaskManager | None = None,
         reports: ReportStore | None = None,
+        compose_file: str = "local-eval/compose.yaml",
     ):
         self.repo_root = Path(repo_root).resolve()
-        self.manager = manager or TaskManager(
-            SubprocessRunner(self.repo_root), "local-eval/compose.yaml"
-        )
         self.reports = reports or ReportStore(
             self.repo_root / "local-eval/reports"
+        )
+        self.manager = manager or TaskManager(
+            SubprocessRunner(self.repo_root, self.reports._folder),
+            compose_file,
+            os.environ.get("DEEPEVAL_EVAL_SERVICE", "eval"),
         )
         self.config: dict[str, Any] | None = None
         self.credentials = CredentialEnvelope()
@@ -273,7 +277,11 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length) or b"{}")
 
     def _json(self, status: int, value: Any):
-        body = json.dumps(value, ensure_ascii=False).encode("utf-8") + b"\n"
+        body = (
+            json.dumps(value, ensure_ascii=False)
+            .encode("utf-8", errors="backslashreplace")
+            + b'\n'
+        )
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -304,9 +312,24 @@ def create_server(app: ConsoleApp, host: str = "127.0.0.1", port: int = 8787):
 
 def main() -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    app = ConsoleApp(repo_root)
+    reports = Path(
+        os.environ.get(
+            "DEEPEVAL_RESULTS_FOLDER", str(repo_root / "local-eval/reports")
+        )
+    )
+    app = ConsoleApp(
+        repo_root,
+        reports=ReportStore(reports),
+        compose_file=os.environ.get(
+            "DEEPEVAL_COMPOSE_FILE", "local-eval/compose.yaml"
+        ),
+    )
     app.manager.cleanup_stale()
-    create_server(app, "127.0.0.1", 8787).serve_forever()
+    create_server(
+        app,
+        os.environ.get("DEEPEVAL_CONSOLE_HOST", "127.0.0.1"),
+        int(os.environ.get("DEEPEVAL_CONSOLE_PORT", "8787")),
+    ).serve_forever()
 
 
 if __name__ == "__main__":

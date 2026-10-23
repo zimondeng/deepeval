@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import sys
@@ -13,11 +14,29 @@ from evals.execution import run_e2e
 from ui.reports import ReportStore
 
 
+def _container_config(config):
+    config = copy.deepcopy(config)
+    dataset = config.get("dataset") if isinstance(config, dict) else None
+    if isinstance(dataset, dict):
+        dataset["path"] = _container_path(dataset.get("path"))
+    component = config.get("component") if isinstance(config, dict) else None
+    if isinstance(component, dict):
+        component["trace_path"] = _container_path(component.get("trace_path"))
+    return config
+
+
+def _container_path(value):
+    prefix = "local-eval/datasets/"
+    if isinstance(value, str) and value.startswith(prefix):
+        return "datasets/" + value[len(prefix) :]
+    return value
+
+
 def main() -> int:
     payload = json.load(sys.stdin)
     if not isinstance(payload, dict):
         raise ValueError("console payload must be an object")
-    config = payload.get("config")
+    config = _container_config(payload.get("config"))
     credentials = CredentialEnvelope.from_stdin(
         __import__("io").StringIO(json.dumps(payload.get("credentials", {})))
     )

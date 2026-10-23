@@ -65,7 +65,7 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
         }
         request = Request(
             f"{self.base_url}/v1/decisions",
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            data=json.dumps(payload, ensure_ascii=True).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
@@ -120,13 +120,10 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
         result = {}
         for key, question in questions.items():
             if hasattr(question, "options"):
-                criteria = {
-                    str(option): str(option) for option in question.options
-                }
                 result[key] = {
                     "type": "choice",
                     "instructions": question.instructions,
-                    "criteria": criteria,
+                    "criteria": dict(question.options),
                 }
             elif hasattr(question, "levels"):
                 result[key] = {
@@ -135,12 +132,21 @@ class EmrankJevModel(DeepEvalBaseSystemOneModel):
                     "criteria": list(question.levels),
                 }
             else:
+                criteria = None
+                if (
+                    getattr(question, "true", None) is not None
+                    or getattr(question, "false", None) is not None
+                ):
+                    criteria = {
+                        "true": getattr(question, "true", None),
+                        "false": getattr(question, "false", None),
+                    }
                 result[key] = {
                     "type": "noul",
                     "instructions": question.instructions,
-                    "true": getattr(question, "true", None),
-                    "false": getattr(question, "false", None),
                 }
+                if criteria is not None:
+                    result[key]["criteria"] = criteria
         return result
 
     @staticmethod

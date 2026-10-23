@@ -6,7 +6,8 @@ from pathlib import Path
 from threading import Thread
 
 from evals.credentials import CredentialEnvelope
-from evals.execution import run_e2e
+from evals.emrank_jev import EmrankJevModel
+from evals.execution import _questions, run_e2e
 from ui.reports import ReportStore
 
 
@@ -129,3 +130,92 @@ def test_target_failure_does_not_fallback_to_fixture(tmp_path):
         assert report["quality_passed"] is None
         assert "target" in report["cases"]["case-1"]["error"]
         assert [path for path, _ in _Handler.requests] == ["/missing"]
+
+
+def test_jev_question_payload_matches_system_one_schema():
+    questions = _questions(
+        [
+            {
+                "id": "noul",
+                "type": "noul",
+                "text": "It is relevant.",
+                "true": "Relevant",
+                "false": "Not relevant",
+            },
+            {
+                "id": "choice",
+                "type": "choice",
+                "text": "Select the result.",
+                "options": {"good": 1, "bad": 0},
+            },
+            {
+                "id": "score",
+                "type": "score",
+                "text": "Rate the result.",
+                "levels": ["bad", "good"],
+            },
+        ]
+    )
+    payload = EmrankJevModel._questions(
+        {
+            f"q_{index}": question.to_system_one()
+            for index, question in enumerate(questions)
+        }
+    )
+
+    assert payload == {
+        "q_0": {
+            "type": "noul",
+            "instructions": "It is relevant.",
+            "criteria": {"true": "Relevant", "false": "Not relevant"},
+        },
+        "q_1": {
+            "type": "choice",
+            "instructions": "Select the result.",
+            "criteria": {"good": None, "bad": None},
+        },
+        "q_2": {
+            "type": "score",
+            "instructions": "Rate the result.",
+            "criteria": ["bad", "good"],
+        },
+    }
+    assert all(set(question) <= {"type", "instructions", "criteria"} for question in payload.values())
+    bare_noul = EmrankJevModel._questions(
+        {"q": _questions([{"type": "noul", "text": "Bare proposition."}])[0].to_system_one()}
+    )
+    assert bare_noul == {
+        "q": {"type": "noul", "instructions": "Bare proposition."}
+    }
+
+
+def test_run_e2e_escapes_invalid_unicode_in_target_request(tmp_path):
+    with fake_http() as base_url:
+        config = _config(tmp_path, base_url)
+        dataset = tmp_path / "cases.jsonl"
+        dataset.write_text(
+            json.dumps(
+                {
+                    "id": "case-1",
+                    "input": "bad" + chr(0xDCBB),
+                    "actual_output": "fixture answer",
+                }
+            )
+            + '\n',
+            encoding="utf-8",
+        )
+        config["dataset"]["path"] = str(dataset)
+
+        report = run_e2e(
+            config,
+            CredentialEnvelope(jev_api_key="fake-key"),
+            ReportStore(tmp_path / "reports", secrets=["fake-key"]),
+            run_id="surrogate1",
+        )
+
+        assert report["execution_status"] == "completed"
+        assert report["verification_status"] == "verified"
+        assert [path for path, _ in _Handler.requests] == [
+            "/chat",
+            "/jev/v1/decisions",
+        ]

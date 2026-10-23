@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -34,6 +35,10 @@ class CommandRunner(Protocol):
 
     def owned_containers(self) -> list[str]: ...
 
+    def copy_report(self, container: str, run_id: str): ...
+
+    def remove(self, container: str): ...
+
 
 @dataclass
 class Task:
@@ -45,9 +50,12 @@ class Task:
 class TaskManager:
     """Own one evaluation at a time and never accept a user command."""
 
-    def __init__(self, runner: CommandRunner, compose_file: str):
+    def __init__(
+        self, runner: CommandRunner, compose_file: str, service: str = "eval"
+    ):
         self._runner = runner
         self._compose_file = compose_file
+        self._service = service
         self._tasks: dict[str, Task] = {}
         self._active: str | None = None
 
@@ -63,7 +71,7 @@ class TaskManager:
         self._tasks[run_id] = task
         self._active = run_id
         try:
-            self._runner.start(self._command(task), stdin_payload)
+            process = self._runner.start(self._command(task), stdin_payload)
         except Exception:
             task.status = "failed"
             self._runner.stop(task.container_name)
@@ -71,7 +79,22 @@ class TaskManager:
             self._active = None
             raise
         task.status = "running"
+        if hasattr(process, "wait"):
+            threading.Thread(
+                target=self._watch_process, args=(task, process), daemon=True
+            ).start()
         return task
+
+    def _watch_process(self, task: Task, process) -> None:
+        try:
+            exit_code = process.wait()
+        except Exception:
+            exit_code = 1
+        if hasattr(self._runner, "copy_report"):
+            self._runner.copy_report(task.container_name, task.run_id)
+        if hasattr(self._runner, "remove"):
+            self._runner.remove(task.container_name)
+        self.finish(task.run_id, exit_code)
 
     def finish(self, run_id: str, exit_code: int) -> Task:
         task = self._task(run_id)
@@ -130,12 +153,11 @@ class TaskManager:
             "ALL_PROXY=",
             "--env",
             f"DEEPEVAL_RUN_ID={task.run_id}",
-            "--rm",
             "--name",
             task.container_name,
             "--label",
             f"{_OWNER_LABEL}={task.run_id}",
-            "eval",
+            self._service,
             "python",
             "-m",
             "evals.console_runner",
@@ -145,8 +167,9 @@ class TaskManager:
 class SubprocessRunner:
     """Docker subprocess adapter used by the UI process."""
 
-    def __init__(self, cwd: Path):
+    def __init__(self, cwd: Path, reports_dir: Path | None = None):
         self._cwd = cwd
+        self._reports_dir = reports_dir or cwd / "local-eval" / "reports"
 
     def start(self, command: tuple[str, ...], stdin_payload: str | None = None):
         process = subprocess.Popen(
@@ -191,6 +214,25 @@ class SubprocessRunner:
                 return True
             time.sleep(0.1)
         return False
+
+    def copy_report(self, container: str, run_id: str):
+        subprocess.run(
+            (
+                "docker",
+                "cp",
+                f"{container}:/eval/reports/run_{run_id}.json",
+                str(self._reports_dir),
+            ),
+            cwd=self._cwd,
+            check=False,
+        )
+
+    def remove(self, container: str):
+        subprocess.run(
+            ("docker", "rm", "-f", container),
+            cwd=self._cwd,
+            check=False,
+        )
 
     def owned_containers(self) -> list[str]:
         result = subprocess.run(

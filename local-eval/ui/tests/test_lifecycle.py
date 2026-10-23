@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from ui.lifecycle import ActiveTaskError, TaskManager
@@ -64,7 +66,6 @@ def test_start_builds_only_the_fixed_compose_command():
         "ALL_PROXY=",
         "--env",
         f"DEEPEVAL_RUN_ID={task.run_id}",
-        "--rm",
         "--name",
         f"deepeval-task-{task.run_id}",
         "--label",
@@ -75,6 +76,26 @@ def test_start_builds_only_the_fixed_compose_command():
         "evals.console_runner",
     )
 
+
+
+class CompletingProcess:
+    def wait(self):
+        return 0
+
+
+def test_process_exit_finishes_task_and_releases_active_slot():
+    runner = FakeRunner()
+    runner.start = lambda command, stdin_payload=None: CompletingProcess()
+    manager = TaskManager(runner, compose_file="compose.yaml")
+
+    task = manager.start()
+    for _ in range(50):
+        if task.status == "completed":
+            break
+        time.sleep(0.01)
+
+    assert task.status == "completed"
+    assert manager._active is None
 
 def test_each_task_has_a_unique_container_identity():
     runner = FakeRunner()

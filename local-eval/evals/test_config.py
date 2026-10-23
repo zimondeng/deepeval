@@ -148,6 +148,21 @@ def test_export_is_secret_free_and_does_not_mutate(valid_config):
     assert valid_config["jev"]["api_key"] == "session-secret"
 
 
+def test_fixture_target_may_omit_url(valid_config):
+    config = {
+        **valid_config,
+        "target": {
+            "url": "",
+            "body_template": "",
+            "output_path": "",
+        },
+    }
+
+    validated = validate_config(config)
+
+    assert validated["target"]["url"] == ""
+
+
 def test_export_rejects_secrets_in_target_headers(valid_config):
     config = copy.deepcopy(valid_config)
     config["target"]["headers"] = {"Authorization": "Bearer secret"}

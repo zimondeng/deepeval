@@ -180,8 +180,8 @@ class ReportStore:
         if content is None:
             return None
         safe = self._redact(content)
-        encoded = json.dumps(
-            safe, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        encoded = self._json_text(
+            safe, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
         return {
             "sha256": hashlib.sha256(encoded).hexdigest(),
@@ -197,7 +197,7 @@ class ReportStore:
 
     def _write(self, run_id: str, report: dict[str, Any]) -> None:
         self._folder.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+        payload = self._json_text(report, indent=2) + '\n'
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=self._folder, delete=False
         ) as handle:
@@ -215,6 +215,13 @@ class ReportStore:
             os.fsync(handle.fileno())
             temporary = Path(handle.name)
         os.replace(temporary, latest)
+
+    @staticmethod
+    def _json_text(value: Any, **kwargs: Any) -> str:
+        """Keep reports writable when input contains isolated surrogates."""
+        return json.dumps(value, ensure_ascii=False, **kwargs).encode(
+            "utf-8", errors="backslashreplace"
+        ).decode("utf-8")
 
     def _redact(self, value: Any) -> Any:
         if isinstance(value, str):

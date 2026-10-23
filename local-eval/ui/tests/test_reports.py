@@ -123,3 +123,21 @@ def test_terminal_report_cannot_be_overwritten_by_late_events(tmp_path: Path):
 
     assert late == completed
     assert json.loads((tmp_path / "run_fedcba.json").read_text()) == completed
+
+
+def test_report_escapes_isolated_surrogates_in_input(tmp_path: Path):
+    store = ReportStore(tmp_path)
+    invalid = "bad" + chr(0xDCBB)
+    store.create(
+        "surrogate1",
+        config={"project": {"name": invalid}},
+        cases=[{"id": "case-1", "input": invalid}],
+        snapshot={"input": invalid},
+    )
+
+    report = store.read("surrogate1")
+
+    assert "\\udcbb" in (tmp_path / "run_surrogate1.json").read_text(
+        encoding="utf-8"
+    )
+    assert report["input_snapshot"]["content"]["input"] == invalid

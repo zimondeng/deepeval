@@ -46,6 +46,9 @@ class FakeManager:
         self._active = None
         return task
 
+    def finish(self, run_id, exit_code):
+        return self._tasks[run_id]
+
 
 def request(server, method, path, body=None, headers=None):
     thread = threading.Thread(target=server.serve_forever)
@@ -200,3 +203,39 @@ def test_console_serves_accessible_native_sections(tmp_path: Path):
         assert f'id="{section}"' in page
     assert 'aria-live="polite"' in page
     assert 'id="config-preview"' in page
+
+
+def test_console_accepts_container_paths_for_compose_and_reports(
+    tmp_path: Path,
+):
+    reports = ReportStore(tmp_path / "reports")
+    app = ConsoleApp(
+        tmp_path,
+        reports=reports,
+        compose_file="/eval/compose.yaml",
+    )
+
+    assert app.manager._compose_file == "/eval/compose.yaml"
+    assert app.reports._folder == tmp_path / "reports"
+
+
+def test_report_route_escapes_isolated_surrogates(tmp_path: Path):
+    manager = FakeManager()
+    reports = ReportStore(tmp_path / "reports")
+    reports.create(
+        "0123456789ab",
+        config={},
+        cases=[{"id": "case-1"}],
+        snapshot={"input": "bad" + chr(0xDCBB)},
+    )
+    app = ConsoleApp(tmp_path, manager=manager, reports=reports)
+
+    status, _, body = request(
+        create_server(app, port=0),
+        "GET",
+        "/api/runs/0123456789ab/report",
+    )
+
+    assert status == 200
+    assert json.loads(body)["run_id"] == "0123456789ab"
+    assert "\\udcbb" in body.decode()

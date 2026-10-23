@@ -27,3 +27,35 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: ["python", "-m", "evals.test_smoke"]
+
+  console:
+    image: deepeval-local:4.3.1
+    working_dir: /eval
+    environment:
+      DEEPEVAL_COMPOSE_FILE: /eval/compose.yaml
+      DEEPEVAL_EVAL_SERVICE: console_eval
+      DEEPEVAL_CONSOLE_HOST: 0.0.0.0
+      DEEPEVAL_RESULTS_FOLDER: /eval/reports
+      DEEPEVAL_TELEMETRY_OPT_OUT: "1"
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - ./reports:/eval/reports
+      - ./compose.yaml:/eval/compose.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["python", "-m", "ui.server"]
+
+  console_eval:
+    image: deepeval-local:4.3.1
+    working_dir: /eval
+    environment:
+      DEEPEVAL_EVAL_MODE: ${DEEPEVAL_EVAL_MODE:-system_one}
+      JEV_MODEL: ${JEV_MODEL:-typesafe/jev-1.14.0}
+      JEV_BASE_URL: ${JEV_BASE_URL:-https://emrank.tech}
+      DEEPEVAL_RESULTS_FOLDER: /eval/reports
+      DEEPEVAL_TELEMETRY_OPT_OUT: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["python", "-m", "evals.test_smoke"]
