@@ -122,6 +122,9 @@ celerybeat.pid
 # Environments
 .env
 .env.local
+
+# Local evaluation datasets. Keep fixtures on disk, not in git.
+*.jsonl
 .venv
 env/
 venv/
